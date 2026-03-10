@@ -5,7 +5,6 @@ This folder contains Dremio semantic-layer assets for the MVP.
 Current contents:
 
 - `sql/semantic_raw_matches_odds.sql`
-- `sql/semantic_silver_matches.sql`
 
 What this SQL does:
 
@@ -13,7 +12,12 @@ What this SQL does:
 - keeps only the stable shared raw columns needed for the MVP
 - adds semantic metadata columns such as `Season`, `RunId`, and `IngestDate`
 - creates a stable raw dataset contract for dbt as `semantic.raw_matches_odds`
-- exposes the latest published Silver Parquet artifact as `semantic.silver_matches`
+
+dbt then creates:
+
+- `semantic.silver_matches`
+- `semantic.gold_match_context`
+- `semantic.gold_h2h_context`
 
 Responsibility:
 

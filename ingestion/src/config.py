@@ -15,9 +15,7 @@ SOURCE_NAME = "football_data_co_uk"
 ENTITY_NAME = "matches_odds"
 DEFAULT_BUCKET = "football"
 BRONZE_PREFIX = "bronze"
-SILVER_PREFIX = "silver"
 LOCAL_RAW_ROOT = Path("data/raw")
-LOCAL_SILVER_ROOT = Path("data/silver")
 
 DEFAULT_LEAGUES = (
     League("E0", "Premier League", "England"),

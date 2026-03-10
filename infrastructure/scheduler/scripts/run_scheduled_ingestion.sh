@@ -48,11 +48,6 @@ main() {
   )
 
   (
-    cd /workspace
-    python infrastructure/scripts/publish_silver_matches.py
-  )
-
-  (
     cd /workspace/dbt
     dbt run --profiles-dir /workspace/dbt
     dbt test --profiles-dir /workspace/dbt

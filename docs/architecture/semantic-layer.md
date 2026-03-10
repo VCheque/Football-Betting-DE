@@ -60,11 +60,13 @@ Target dataset name for curated match data:
 
 - `semantic.silver_matches`
 
-This dataset points at the latest published Silver Parquet artifact in MinIO.
+This dataset is now owned by dbt.
 
-The publisher script is:
+Implementation shape:
 
-- [publish_silver_matches.py](/Users/valtercheque/Documents/Portfolio/Football-Betting-DE/infrastructure/scripts/publish_silver_matches.py)
+- dbt builds a physical table named `silver_matches_physical`
+- dbt exposes a stable semantic view named `semantic.silver_matches`
+- downstream models query `ref('silver_matches')` instead of storage paths
 
 The Bronze source shape remains:
 
@@ -125,6 +127,7 @@ The semantic refresh process handles the run-specific path generation centrally.
    - `dim_league`
 
 After initial setup, `raw_matches_odds` should be refreshed by the sync script instead of manual editing.
+`silver_matches` is refreshed by `dbt run`.
 
 ## dbt Contract
 
@@ -133,13 +136,13 @@ The dbt project in this repository is written against the `semantic` space.
 That means dbt expects these Dremio datasets to exist:
 
 - `semantic.raw_matches_odds`
-- `semantic.silver_matches`
 - `semantic.pipeline_run`
 - `semantic.file_manifest`
 - `semantic.dim_league`
 
 Current Gold outputs built in Dremio by dbt:
 
+- `semantic.silver_matches`
 - `semantic.gold_match_context`
 - `semantic.gold_h2h_context`
 

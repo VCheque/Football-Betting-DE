@@ -6,7 +6,6 @@ sources:
     schema: no_schema
     tables:
       - name: raw_matches_odds
-      - name: silver_matches
       - name: pipeline_run
       - name: file_manifest
       - name: dim_league

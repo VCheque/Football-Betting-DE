@@ -1,7 +1,25 @@
 version: 2
 
 models:
-  - name: stg_matches_odds
+  - name: stg_raw_matches_odds
+    columns:
+      - name: match_date
+        tests:
+          - not_null
+      - name: home_team
+        tests:
+          - not_null
+      - name: away_team
+        tests:
+          - not_null
+      - name: result_ft
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['H', 'D', 'A']
+
+  - name: silver_matches
     columns:
       - name: match_date
         tests:

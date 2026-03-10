@@ -9,3 +9,25 @@
 23:18:30.211167 [info ]: Finished loading project [  0.00s]
 00:18:37.593916 [info ]: Started loading project
 00:18:37.619377 [info ]: Finished loading project [  0.03s]
+==================== 2026-03-10T10:15:01.471546Z | adc8ba43-dda6-4e98-8ff2-761b2ad8e080 ====================
+10:15:01.473778 [info ]: Starting dbt LSP server
+10:15:01.474984 [info ]: Connecting to LSP client on port 8000
+10:15:01.475947 [info ]: Successfully connected to LSP client
+10:15:01.475963 [info ]: Creating LSP service...
+10:15:01.549137 [info ]: Creating LSP server...
+10:15:01.549256 [info ]: Starting LSP server...
+10:15:02.006662 [info ]: Started loading project
+10:15:02.036480 [info ]: Finished loading project [  0.03s]
+11:09:30.279953 [info ]: Started loading project
+11:09:30.318897 [info ]: Finished loading project [  0.04s]
+11:11:08.471691 [info ]: Started loading project
+11:11:08.482018 [info ]: Finished loading project [  0.01s]
+==================== 2026-03-10T11:30:13.614531Z | 7477dde3-51e4-4f2a-9bfa-a50de240cfe4 ====================
+11:30:13.616425 [info ]: Starting dbt LSP server
+11:30:13.616942 [info ]: Connecting to LSP client on port 8000
+11:30:13.617445 [info ]: Successfully connected to LSP client
+11:30:13.617448 [info ]: Creating LSP service...
+11:30:13.657970 [info ]: Creating LSP server...
+11:30:13.657981 [info ]: Starting LSP server...
+11:30:13.683373 [info ]: Started loading project
+11:30:13.708259 [info ]: Finished loading project [  0.02s]

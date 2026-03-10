@@ -5,6 +5,8 @@ select
     result_ft,
     league_code,
     season_label,
+    run_id,
+    ingest_date,
     home_goals_ft,
     away_goals_ft,
     home_goals_ht,
@@ -30,4 +32,4 @@ select
     odds_avg_home,
     odds_avg_draw,
     odds_avg_away
-from {{ source('semantic', 'silver_matches') }}
+from {{ ref('silver_matches_physical') }}

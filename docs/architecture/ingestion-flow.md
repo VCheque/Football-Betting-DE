@@ -15,8 +15,7 @@ It:
 - uploads them to MinIO Bronze,
 - inserts run metadata into PostgreSQL,
 - inserts file manifests into PostgreSQL,
-- upserts league reference data into PostgreSQL,
-- publishes a curated `silver_matches` Parquet artifact after ingestion.
+- upserts league reference data into PostgreSQL.
 
 ## Inputs
 

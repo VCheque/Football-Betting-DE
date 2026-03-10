@@ -52,4 +52,4 @@ select
         order by match_date
         rows between 5 preceding and 1 preceding
     ) as away_last5_goals_against_pg
-from {{ ref('stg_matches_odds') }}
+from {{ ref('silver_matches') }}

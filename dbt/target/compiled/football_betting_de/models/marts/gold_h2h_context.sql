@@ -11,7 +11,7 @@ with base_matches as (
         odds_b365_home,
         odds_b365_draw,
         odds_b365_away
-    from "semantic"."stg_matches_odds"
+    from "semantic"."silver_matches"
     where result_ft in ('H', 'D', 'A')
 ),
 

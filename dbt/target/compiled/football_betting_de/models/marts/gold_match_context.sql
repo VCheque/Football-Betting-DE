@@ -52,4 +52,4 @@ select
         order by match_date
         rows between 5 preceding and 1 preceding
     ) as away_last5_goals_against_pg
-from "semantic"."stg_matches_odds"
+from "semantic"."silver_matches"

@@ -7,7 +7,7 @@ import boto3
 from botocore.client import BaseClient
 from botocore.exceptions import ClientError
 
-from .config import ENTITY_NAME, LOCAL_RAW_ROOT, LOCAL_SILVER_ROOT, SILVER_PREFIX, SOURCE_NAME
+from .config import ENTITY_NAME, LOCAL_RAW_ROOT, SOURCE_NAME
 
 
 def build_s3_client() -> BaseClient:
@@ -63,32 +63,3 @@ def write_local_raw_file(run_id: str, ingest_date: str, league_code: str, season
     target_path.write_bytes(content_bytes)
     return target_path
 
-
-def silver_object_key(run_id: str, ingest_date: str, file_name: str = "silver_matches.parquet") -> str:
-    return (
-        f"{SILVER_PREFIX}/entity=matches/dataset=silver_matches/"
-        f"ingest_date={ingest_date}/run_id={run_id}/{file_name}"
-    )
-
-
-def local_silver_path(run_id: str, ingest_date: str, file_name: str = "silver_matches.parquet") -> Path:
-    root = Path(os.getenv("LOCAL_SILVER_ROOT", str(LOCAL_SILVER_ROOT)))
-    return (
-        root
-        / "entity=matches"
-        / "dataset=silver_matches"
-        / f"ingest_date={ingest_date}"
-        / f"run_id={run_id}"
-        / file_name
-    )
-
-
-def upload_file(client: BaseClient, bucket_name: str, object_key: str, local_path: Path, content_type: str, metadata: dict[str, str] | None = None) -> None:
-    with local_path.open("rb") as file_handle:
-        client.put_object(
-            Bucket=bucket_name,
-            Key=object_key,
-            Body=file_handle,
-            ContentType=content_type,
-            Metadata=metadata or {},
-        )

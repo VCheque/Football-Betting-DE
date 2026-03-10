@@ -50,7 +50,6 @@ This service:
 - uses cron syntax through `supercronic`,
 - triggers the ingestion Python job automatically,
 - rebuilds the semantic raw dataset from PostgreSQL metadata,
-- publishes the latest curated `silver_matches` dataset to MinIO and Dremio,
 - runs dbt models and tests after the semantic refresh,
 - logs execution output to the container logs.
 
@@ -62,12 +61,11 @@ Relevant files:
 
 ## What the Scheduled Job Runs
 
-The scheduler executes four steps:
+The scheduler executes three steps:
 
 ```text
 python -m src.main --season-start <resolved_year> --history-seasons <n>
 python infrastructure/scripts/sync_semantic_layer.py
-python infrastructure/scripts/publish_silver_matches.py
 dbt run && dbt test
 ```
 
@@ -120,9 +118,9 @@ Behavior:
 6. File metadata is written to PostgreSQL.
 7. The semantic raw SQL is rebuilt from the latest successful `pipeline_run` and `file_manifest` rows.
 8. Dremio `semantic.raw_matches_odds` is recreated from that generated SQL.
-9. The latest raw run is transformed into `silver_matches` Parquet and uploaded to MinIO Silver.
-10. Dremio `semantic.silver_matches` is recreated from that published artifact.
-11. dbt runs the staging and Gold models.
+9. dbt builds `silver_matches_physical` as the dbt-owned Silver table.
+10. dbt exposes `semantic.silver_matches` as the stable semantic Silver dataset.
+11. dbt builds the Gold models.
 12. dbt tests the refreshed datasets.
 
 ## Operational Outcome
@@ -131,7 +129,7 @@ Each scheduled run creates:
 
 - a new `run_id`
 - new raw snapshots in Bronze
-- a new Silver snapshot in MinIO
+- refreshed dbt-owned Silver and Gold datasets
 - new `pipeline_run` metadata
 - new `file_manifest` records
 
@@ -156,19 +154,18 @@ Instead, the sync step:
 
 This keeps downstream dbt models aligned with the latest Bronze snapshot.
 
-## Metadata-Driven Silver Publication
+## dbt-Owned Silver
 
-The Silver layer is also metadata-driven.
+The Silver layer is no longer published by a Python script.
 
-Instead of hardcoding one file path, the publish step:
+Instead:
 
-- finds the latest successful raw ingestion run,
-- downloads the raw Bronze files for that run,
-- standardizes them into a single Parquet dataset,
-- uploads that Parquet artifact to MinIO Silver,
-- republishes `semantic.silver_matches` in Dremio.
+- Python owns ingestion into Bronze
+- the semantic raw layer exposes the latest successful Bronze run
+- dbt owns the transformation from raw semantic data into `silver_matches`
+- Gold models depend on `ref('silver_matches')`
 
-This keeps curated downstream models aligned with the latest successful run.
+This keeps transformation ownership in one framework and makes lineage, tests, and model dependencies explicit.
 
 ## Interview Explanation
 

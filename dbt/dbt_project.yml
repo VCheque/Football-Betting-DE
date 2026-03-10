@@ -15,5 +15,7 @@ models:
   football_betting_de:
     staging:
       +materialized: view
+    silver:
+      +materialized: view
     marts:
       +materialized: view

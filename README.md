@@ -121,8 +121,7 @@ The scheduled pipeline refreshes:
 - raw Bronze snapshots in MinIO
 - ingestion run metadata in PostgreSQL
 - the Dremio semantic raw dataset
-- the Silver Parquet dataset in MinIO
-- dbt staging and Gold models
+- dbt-owned Silver and Gold datasets in Dremio
 
 Implementation details are documented in:
 
@@ -144,6 +143,19 @@ The platform should support data such as:
 - odds and bookmaker market data
 
 ## Data Layers
+
+## Current Implementation Note
+
+The target architecture still aims for Bronze, Silver, and Gold object storage layers in MinIO.
+
+The current implemented state is:
+
+- Bronze is stored in MinIO
+- Silver is owned by dbt and materialized as a Dremio-managed physical table
+- `semantic.silver_matches` is the stable semantic view over that dbt-owned Silver relation
+- Gold datasets are dbt-built semantic views in Dremio
+
+This keeps transformation ownership in dbt now, while preserving the path to object-storage-backed curated layers later.
 
 ### 1. Bronze Layer
 
@@ -179,7 +191,7 @@ Characteristics:
 - standardized dates and types
 - deduplicated records
 - mapped team and league identifiers
-- persisted as curated Parquet artifacts in MinIO
+- owned by dbt as the transformation layer
 
 Example data in Silver:
 
@@ -428,9 +440,9 @@ The end-to-end flow is:
 1. football data is collected from APIs or files,
 2. Python ingestion stores the raw payloads in MinIO Bronze,
 3. ingestion metadata and dimensions are stored in PostgreSQL,
-4. the latest successful raw run is published as `silver_matches` in MinIO,
-5. Dremio connects Bronze, Silver, and PostgreSQL into one analytical access layer,
-6. dbt transforms Silver data into business-ready Gold datasets,
+4. Dremio exposes the latest raw run through `semantic.raw_matches_odds`,
+5. dbt builds `silver_matches` as the standardized match layer,
+6. Dremio exposes dbt-owned Silver and Gold datasets through stable semantic names,
 7. Streamlit consumes curated views for dashboards and demos,
 8. scheduling and observability make the platform repeatable and explainable.
 
