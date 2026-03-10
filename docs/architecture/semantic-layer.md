@@ -143,6 +143,7 @@ That means dbt expects these Dremio datasets to exist:
 Current Gold outputs built in Dremio by dbt:
 
 - `semantic.silver_matches`
+- `semantic.gold_standings`
 - `semantic.gold_match_context`
 - `semantic.gold_h2h_context`
 

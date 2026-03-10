@@ -27,3 +27,22 @@ models:
       - name: h2h_matches
         tests:
           - not_null
+
+  - name: gold_standings
+    columns:
+      - name: standing_key
+        tests:
+          - not_null
+          - unique
+      - name: league_code
+        tests:
+          - not_null
+      - name: season_label
+        tests:
+          - not_null
+      - name: team_name
+        tests:
+          - not_null
+      - name: table_position
+        tests:
+          - not_null

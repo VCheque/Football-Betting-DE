@@ -138,9 +138,14 @@ services:
       - jobs
 
   streamlit:
-    image: python:3.11-slim
+    build:
+      context: ../streamlit
     container_name: football-streamlit
-    command: ["sleep", "infinity"]
+    environment:
+      DREMIO_HOST: dremio
+      DREMIO_PORT: 9047
+      DREMIO_USER: ${DREMIO_USER}
+      DREMIO_PASSWORD: ${DREMIO_PASSWORD}
     depends_on:
       dremio:
         condition: service_started

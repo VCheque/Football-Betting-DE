@@ -213,6 +213,7 @@ Characteristics:
 Example Gold datasets:
 
 - standings
+- `gold_standings`
 - head-to-head aggregates
 - `gold_h2h_context`
 - `gold_match_context`
