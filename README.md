@@ -99,6 +99,35 @@ flowchart LR
 | Transformation | ![dbt](https://img.shields.io/badge/dbt-FF694B?style=flat-square&logo=dbt&logoColor=white) | Builds tested Silver and Gold models and documents lineage |
 | Serving | ![Streamlit](https://img.shields.io/badge/Streamlit-FE4B4B?style=flat-square&logo=streamlit&logoColor=white) | Displays curated datasets in a demo-ready application |
 
+## Scheduled Refresh
+
+The ingestion job is designed to run automatically **4 times per day**.
+
+Why this matters:
+
+- football match data and league-table inputs change during the day,
+- the project needs a clear scheduling/orchestration story,
+- a fixed schedule shows operational thinking without adding unnecessary orchestration tools too early.
+
+Current schedule:
+
+- `00:15 UTC`
+- `06:15 UTC`
+- `12:15 UTC`
+- `18:15 UTC`
+
+The scheduled pipeline refreshes:
+
+- raw Bronze snapshots in MinIO
+- ingestion run metadata in PostgreSQL
+- the Dremio semantic raw dataset
+- the Silver Parquet dataset in MinIO
+- dbt staging and Gold models
+
+Implementation details are documented in:
+
+- [scheduled-ingestion.md](/Users/valtercheque/Documents/Portfolio/Football-Betting-DE/docs/architecture/scheduled-ingestion.md)
+
 ## Data Goal
 
 The data goal is to turn messy football data into trusted datasets for analysis and betting-oriented feature generation.
@@ -150,6 +179,7 @@ Characteristics:
 - standardized dates and types
 - deduplicated records
 - mapped team and league identifiers
+- persisted as curated Parquet artifacts in MinIO
 
 Example data in Silver:
 
@@ -172,6 +202,8 @@ Example Gold datasets:
 
 - standings
 - head-to-head aggregates
+- `gold_h2h_context`
+- `gold_match_context`
 - player form metrics
 - injury impact summaries
 - betting feature tables
@@ -222,6 +254,7 @@ Output of this step:
 
 - raw files in MinIO Bronze
 - metadata rows in PostgreSQL
+- local staged files for replayable uploads
 
 ## Step 3. MinIO Bronze
 
@@ -291,6 +324,7 @@ Why this matters:
 Output of this step:
 
 - semantic views that can be consumed by dbt and Streamlit
+- stable datasets such as `semantic.raw_matches_odds` and `semantic.silver_matches`
 
 ## Step 6. dbt Transformations
 
@@ -298,8 +332,7 @@ Goal: convert raw and semi-structured data into tested analytical models.
 
 What happens here:
 
-- build staging models
-- create Silver standardization models
+- build staging models on top of semantic Silver datasets
 - create Gold marts
 - run data tests
 - generate documentation and lineage
@@ -328,9 +361,8 @@ Goal: persist transformed datasets as reusable analytics assets.
 
 What is stored:
 
-- cleaned dimensional datasets
-- analytical marts
-- feature tables for prediction or evaluation
+- `silver_matches` as a curated Parquet dataset
+- future analytical marts and feature tables
 
 Why this matters:
 
@@ -396,10 +428,11 @@ The end-to-end flow is:
 1. football data is collected from APIs or files,
 2. Python ingestion stores the raw payloads in MinIO Bronze,
 3. ingestion metadata and dimensions are stored in PostgreSQL,
-4. Dremio connects both systems into one analytical access layer,
-5. dbt transforms raw data into clean Silver and business-ready Gold datasets,
-6. Streamlit consumes curated views for dashboards and demos,
-7. scheduling and observability make the platform repeatable and explainable.
+4. the latest successful raw run is published as `silver_matches` in MinIO,
+5. Dremio connects Bronze, Silver, and PostgreSQL into one analytical access layer,
+6. dbt transforms Silver data into business-ready Gold datasets,
+7. Streamlit consumes curated views for dashboards and demos,
+8. scheduling and observability make the platform repeatable and explainable.
 
 ## Why This Design Is Strong for Interviews
 

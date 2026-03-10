@@ -1,0 +1,5 @@
+CRON_TZ=UTC
+PATH=/usr/local/bin:/usr/bin:/bin
+
+# Run the ingestion job four times per day to keep match and standings inputs fresh.
+15 0,6,12,18 * * * /usr/local/bin/run-scheduled-ingestion.sh

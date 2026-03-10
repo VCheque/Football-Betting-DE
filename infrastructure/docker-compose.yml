@@ -1,0 +1,164 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: football-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ../sql/postgres:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - platform
+
+  minio:
+    image: minio/minio:latest
+    container_name: football-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "${MINIO_API_PORT}:9000"
+      - "${MINIO_CONSOLE_PORT}:9001"
+    volumes:
+      - minio-data:/data
+    networks:
+      - platform
+
+  dremio:
+    image: dremio/dremio-oss:latest
+    container_name: football-dremio
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    ports:
+      - "${DREMIO_PORT}:9047"
+    volumes:
+      - dremio-data:/opt/dremio/data
+    networks:
+      - platform
+
+  ingestion-runner:
+    build:
+      context: ../ingestion
+    container_name: football-ingestion
+    command: ["sleep", "infinity"]
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      S3_ENDPOINT: http://minio:9000
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      AWS_DEFAULT_REGION: us-east-1
+      MINIO_BUCKET: ${MINIO_BUCKET}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    working_dir: /workspace
+    volumes:
+      - ../ingestion:/workspace
+    networks:
+      - platform
+    profiles:
+      - jobs
+
+  scheduler:
+    build:
+      context: ..
+      dockerfile: infrastructure/scheduler/Dockerfile
+    container_name: football-scheduler
+    environment:
+      DREMIO_HOST: dremio
+      DREMIO_PORT: 9047
+      DREMIO_USER: ${DREMIO_USER}
+      DREMIO_PASSWORD: ${DREMIO_PASSWORD}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      S3_ENDPOINT: http://minio:9000
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      AWS_DEFAULT_REGION: us-east-1
+      MINIO_BUCKET: ${MINIO_BUCKET}
+      INGEST_HISTORY_SEASONS: ${INGEST_HISTORY_SEASONS}
+      SEASON_ROLLOVER_MONTH: ${SEASON_ROLLOVER_MONTH}
+      INGEST_LEAGUE_CODE: ${INGEST_LEAGUE_CODE}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      dremio:
+        condition: service_started
+    working_dir: /workspace
+    volumes:
+      - ..:/workspace
+    networks:
+      - platform
+    profiles:
+      - jobs
+
+  dbt-runner:
+    build:
+      context: ../dbt
+    container_name: football-dbt
+    command: ["sleep", "infinity"]
+    environment:
+      DREMIO_HOST: dremio
+      DREMIO_PORT: 9047
+      DREMIO_USER: ${DREMIO_USER}
+      DREMIO_PASSWORD: ${DREMIO_PASSWORD}
+    depends_on:
+      dremio:
+        condition: service_started
+    working_dir: /workspace
+    volumes:
+      - ../dbt:/workspace
+    networks:
+      - platform
+    profiles:
+      - jobs
+
+  streamlit:
+    image: python:3.11-slim
+    container_name: football-streamlit
+    command: ["sleep", "infinity"]
+    depends_on:
+      dremio:
+        condition: service_started
+    ports:
+      - "${STREAMLIT_PORT}:8501"
+    working_dir: /workspace
+    volumes:
+      - ../streamlit:/workspace
+    networks:
+      - platform
+    profiles:
+      - app
+
+volumes:
+  postgres-data:
+  minio-data:
+  dremio-data:
+
+networks:
+  platform:
+    name: football-platform
