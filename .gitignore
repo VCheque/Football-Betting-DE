@@ -1,1 +1,17 @@
+# Worktrees
 .claude/worktrees/
+
+# Streamlit generated
+streamlit/__pycache__/
+streamlit/sports_betting/__pycache__/
+streamlit/model_documentation.pdf
+streamlit/sports_betting/data/
+
+# Secrets
+infrastructure/.env
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo

@@ -2,6 +2,10 @@ version: 2
 
 models:
   - name: gold_match_context
+    description: >
+      Rolling 5-game performance metrics for each match, computed from each team's
+      perspective as home and away. Covers points, goals, corners, cards, and shots.
+      Used as feature inputs to the XGBoost match prediction model.
     columns:
       - name: match_date
         tests:
@@ -12,8 +16,20 @@ models:
       - name: away_team
         tests:
           - not_null
+      - name: league_code
+        tests:
+          - not_null
+      - name: result_ft
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['H', 'D', 'A']
 
   - name: gold_h2h_context
+    description: >
+      Head-to-head historical analytics between each pair of teams per match.
+      Uses exponential recency decay (rank-based) to weight recent encounters more heavily.
+      Produces weighted win rates, goal differential, and a composite h2h_gap feature.
     columns:
       - name: match_date
         tests:
@@ -29,20 +45,97 @@ models:
           - not_null
 
   - name: gold_standings
+    description: >
+      Season standings for each team per league and season, aggregated from all completed
+      matches in silver_matches. Includes wins, draws, losses, goals, points, PPG, and
+      final league position (ranked by points, goal difference, goals scored).
+      Used for season_points_gap ML feature and Tab 2 league table display.
     columns:
-      - name: standing_key
-        tests:
-          - not_null
-          - unique
       - name: league_code
         tests:
           - not_null
       - name: season_label
         tests:
           - not_null
-      - name: team_name
+      - name: team
         tests:
           - not_null
-      - name: table_position
+      - name: matches_played
         tests:
           - not_null
+      - name: points
+        tests:
+          - not_null
+      - name: league_position
+        tests:
+          - not_null
+
+  - name: gold_rest_fatigue
+    description: >
+      Rest and fatigue indicators per match for both home and away teams.
+      Computes days since each team's last match and a count of matches
+      in the previous 21 days as a proxy for fixture congestion / fatigue.
+      Used for rest_gap and fatigue_gap ML features.
+    columns:
+      - name: match_date
+        tests:
+          - not_null
+      - name: home_team
+        tests:
+          - not_null
+      - name: away_team
+        tests:
+          - not_null
+
+  - name: gold_injuries
+    description: >
+      Active injury records uploaded manually via ingestion/src/upload_injuries.py.
+      Used to compute injury_gap ML feature and render player intelligence in the app.
+    columns:
+      - name: player_name
+        tests:
+          - not_null
+      - name: team
+        tests:
+          - not_null
+
+  - name: gold_player_stats
+    description: >
+      Per-player, per-team, per-season statistics with derived per-90-minute rate
+      columns used as Poisson lambda inputs for the scoring and card probability
+      models in the Streamlit app. Source: Understat. Covers 5 leagues (no Portugal).
+    columns:
+      - name: player_name
+        tests:
+          - not_null
+      - name: team
+        tests:
+          - not_null
+      - name: league_code
+        tests:
+          - not_null
+      - name: season_label
+        tests:
+          - not_null
+
+  - name: gold_team_season_stats
+    description: >
+      Team statistics per season broken down by scope: all matches, home, away,
+      vs top-half opponents, and vs bottom-half opponents. Covers PPG, W-D-L record,
+      corners per game, fouls per game, cards per game, and goals per game.
+      Used by Tab 2 "Team Season Statistics" in the Streamlit app.
+    columns:
+      - name: league_code
+        tests:
+          - not_null
+      - name: season_label
+        tests:
+          - not_null
+      - name: team
+        tests:
+          - not_null
+      - name: match_scope
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['all', 'home', 'away', 'vs_top_half', 'vs_bottom_half']

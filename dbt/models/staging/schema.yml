@@ -37,6 +37,24 @@ models:
               arguments:
                 values: ['H', 'D', 'A']
 
+  - name: stg_player_stats
+    description: >
+      Cleaned and cast player season statistics from the Understat raw CSV source.
+      Covers Premier League, La Liga, Serie A, Bundesliga, and Ligue 1.
+    columns:
+      - name: player_name
+        tests:
+          - not_null
+      - name: team
+        tests:
+          - not_null
+      - name: league_code
+        tests:
+          - not_null
+      - name: season_label
+        tests:
+          - not_null
+
   - name: stg_pipeline_run
     columns:
       - name: run_id

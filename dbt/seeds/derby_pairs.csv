@@ -1,0 +1,32 @@
+league_code,team_a,team_b,rivalry_name
+E0,Arsenal,Chelsea,North vs West London
+E0,Arsenal,Tottenham,North London derby
+E0,Chelsea,Fulham,West London derby
+E0,Chelsea,Tottenham,London derby
+E0,Leeds,Man United,War of the Roses
+E0,Liverpool,Everton,Merseyside derby
+E0,Man City,Man United,Manchester derby
+E0,Newcastle,Sunderland,Tyne-Wear derby
+E0,Tottenham,West Ham,North-East London derby
+SP1,Athletic Club,Sociedad,Basque derby
+SP1,Atletico Madrid,Real Madrid,Madrid derby
+SP1,Barcelona,Espanyol,Derbi Barceloni
+SP1,Betis,Sevilla,Derbi sevillano
+SP1,Getafe,Real Madrid,South Madrid derby
+SP1,Valencia,Villarreal,Derbi de la Comunitat
+I1,AC Milan,Inter,Derby della Madonnina
+I1,Juventus,Torino,Derby della Mole
+I1,Lazio,Roma,Derby della Capitale
+D1,Cologne,Leverkusen,Rheinisches Derby
+D1,Cologne,Dortmund,Westfalisches Derby
+D1,Dortmund,Schalke 04,Revierderby
+D1,Hamburg,St Pauli,Hamburger Stadtderby
+F1,Lens,Lille,Derby du Nord
+F1,Lens,Paris SG,Northern rivalry
+F1,Lyon,Marseille,Clasico francais
+F1,Marseille,Nice,Cote d'Azur rivalry
+P1,Benfica,Belenenses,Lisbon derby
+P1,Benfica,Porto,O Classico
+P1,Benfica,Sporting CP,Derby de Lisboa
+P1,Boavista,Porto,Derby do Porto
+P1,Porto,Sporting CP,Derby dos Grandes

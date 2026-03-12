@@ -141,19 +141,19 @@ services:
     build:
       context: ../streamlit
     container_name: football-streamlit
+    depends_on:
+      dremio:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${STREAMLIT_PORT}:8501"
     environment:
       DREMIO_HOST: dremio
       DREMIO_PORT: 9047
       DREMIO_USER: ${DREMIO_USER}
       DREMIO_PASSWORD: ${DREMIO_PASSWORD}
-    depends_on:
-      dremio:
-        condition: service_started
-    ports:
-      - "${STREAMLIT_PORT}:8501"
-    working_dir: /workspace
-    volumes:
-      - ../streamlit:/workspace
+      DREMIO_TIMEOUT: 60
     networks:
       - platform
     profiles:

@@ -45,6 +45,34 @@ RAW_MATCH_COLUMNS = (
     "AvgA",
 )
 
+# Columns written by ingestion/src/understat_player_stats.py
+RAW_PLAYER_COLUMNS = (
+    "player_id",
+    "player_name",
+    "team",
+    "position",
+    "games",
+    "minutes_played",
+    "goals",
+    "assists",
+    "shots",
+    "key_passes",
+    "yellow_cards",
+    "red_cards",
+    "npg",
+    "xg",
+    "xa",
+    "npxg",
+    "season_label",
+    "league_code",
+)
+
+# Maps entity_name → CSV column tuple for render_select()
+ENTITY_COLUMNS: dict[str, tuple[str, ...]] = {
+    "matches_odds": RAW_MATCH_COLUMNS,
+    "player_stats": RAW_PLAYER_COLUMNS,
+}
+
 OBJECT_KEY_PATTERN = re.compile(
     r"bronze/source=(?P<source>[^/]+)/entity=(?P<entity>[^/]+)/"
     r"ingest_date=(?P<ingest_date>\d{4}-\d{2}-\d{2})/run_id=(?P<run_id>[^/]+)/"
@@ -123,10 +151,10 @@ def parse_object_key(object_key: str) -> dict:
     return parsed
 
 
-def render_select(entry: dict) -> str:
-    columns = ",\n    ".join(f'source_data."{column}"' for column in RAW_MATCH_COLUMNS)
+def render_select(entry: dict, columns: tuple[str, ...]) -> str:
+    cols = ",\n    ".join(f'source_data."{column}"' for column in columns)
     return f"""select
-    {columns},
+    {cols},
     '{entry["season_label"]}' as "Season",
     '{entry["run_id"]}' as "RunId",
     '{entry["ingest_date"]}' as "IngestDate",
@@ -140,13 +168,18 @@ from TABLE(
 ) as source_data"""
 
 
-def build_raw_matches_sql(entries: list[dict]) -> str:
+def build_entity_sql(entries: list[dict], columns: tuple[str, ...]) -> str:
     header = (
         "-- Generated from PostgreSQL metadata.\n"
         "-- This file is rebuilt from the latest successful ingestion run.\n\n"
     )
-    body = "\n\nunion all\n\n".join(render_select(entry) for entry in entries)
+    body = "\n\nunion all\n\n".join(render_select(entry, columns) for entry in entries)
     return header + body + "\n"
+
+
+# Keep old name as an alias so existing call sites continue to work
+def build_raw_matches_sql(entries: list[dict]) -> str:
+    return build_entity_sql(entries, RAW_MATCH_COLUMNS)
 
 
 def repository_root() -> Path:
@@ -240,7 +273,8 @@ def main() -> int:
         conn.close()
 
     entries = [parse_object_key(row["object_key"]) for row in manifests]
-    sql_text = build_raw_matches_sql(entries)
+    columns = ENTITY_COLUMNS.get(args.entity_name, RAW_MATCH_COLUMNS)
+    sql_text = build_entity_sql(entries, columns)
     output_path = write_sql_artifact(args.output_sql, sql_text)
 
     token = dremio_token()

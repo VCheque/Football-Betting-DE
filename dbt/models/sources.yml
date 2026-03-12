@@ -9,3 +9,5 @@ sources:
       - name: pipeline_run
       - name: file_manifest
       - name: dim_league
+      - name: raw_player_stats
+      - name: raw_injuries
