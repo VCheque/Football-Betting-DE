@@ -1,5 +1,9 @@
 CRON_TZ=UTC
 PATH=/usr/local/bin:/usr/bin:/bin
 
-# Run the ingestion job four times per day to keep match and standings inputs fresh.
+# Run the match/odds ingestion job four times per day to keep inputs fresh.
 15 0,6,12,18 * * * /usr/local/bin/run-scheduled-ingestion.sh
+
+# Run the Understat player-stats ingestion once per week (Sunday 02:00 UTC).
+# Player stats update at most daily; a weekly refresh is sufficient.
+0 2 * * 0 /usr/local/bin/run-scheduled-player-stats.sh

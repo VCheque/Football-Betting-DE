@@ -1,0 +1,27 @@
+version: 2
+
+seeds:
+  - name: derby_pairs
+    description: >
+      Known same-city / local rivalry pairs across the six supported leagues.
+      Team names use the football-data.co.uk naming convention.
+      team_a is alphabetically earlier to guarantee uniqueness regardless of
+      home/away assignment. Used as the source of truth for the derby_flag
+      feature in the XGBoost match model.
+    columns:
+      - name: league_code
+        description: football-data.co.uk league code (E0, SP1, I1, D1, F1, P1)
+        tests:
+          - not_null
+          - accepted_values:
+              values: [E0, SP1, I1, D1, F1, P1]
+      - name: team_a
+        description: Alphabetically first team name
+        tests:
+          - not_null
+      - name: team_b
+        description: Alphabetically second team name
+        tests:
+          - not_null
+      - name: rivalry_name
+        description: Human-readable label for the rivalry

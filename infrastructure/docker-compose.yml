@@ -138,17 +138,22 @@ services:
       - jobs
 
   streamlit:
-    image: python:3.11-slim
+    build:
+      context: ../streamlit
     container_name: football-streamlit
-    command: ["sleep", "infinity"]
     depends_on:
       dremio:
         condition: service_started
+      postgres:
+        condition: service_healthy
     ports:
       - "${STREAMLIT_PORT}:8501"
-    working_dir: /workspace
-    volumes:
-      - ../streamlit:/workspace
+    environment:
+      DREMIO_HOST: dremio
+      DREMIO_PORT: 9047
+      DREMIO_USER: ${DREMIO_USER}
+      DREMIO_PASSWORD: ${DREMIO_PASSWORD}
+      DREMIO_TIMEOUT: 60
     networks:
       - platform
     profiles:

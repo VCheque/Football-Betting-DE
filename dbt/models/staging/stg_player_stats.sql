@@ -1,0 +1,20 @@
+select
+    cast(nullif("player_id", '')      as varchar) as player_id,
+    cast(nullif("player_name", '')    as varchar) as player_name,
+    cast(nullif("team", '')           as varchar) as team,
+    cast(nullif("position", '')       as varchar) as player_position,
+    cast(nullif("games", '')          as integer) as games,
+    cast(nullif("minutes_played", '') as integer) as minutes_played,
+    cast(nullif("goals", '')          as integer) as goals,
+    cast(nullif("assists", '')        as integer) as assists,
+    cast(nullif("shots", '')          as integer) as shots,
+    cast(nullif("key_passes", '')     as integer) as key_passes,
+    cast(nullif("yellow_cards", '')   as integer) as yellow_cards,
+    cast(nullif("red_cards", '')      as integer) as red_cards,
+    cast(nullif("npg", '')            as integer) as npg,
+    cast(nullif("xg", '')             as double)  as xg,
+    cast(nullif("xa", '')             as double)  as xa,
+    cast(nullif("npxg", '')           as double)  as npxg,
+    cast(nullif("season_label", '')   as varchar) as season_label,
+    cast(nullif("league_code", '')    as varchar) as league_code
+from {{ source('semantic', 'raw_player_stats') }}
