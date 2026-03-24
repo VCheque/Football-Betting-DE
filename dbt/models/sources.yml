@@ -11,3 +11,4 @@ sources:
       - name: dim_league
       - name: raw_player_stats
       - name: raw_injuries
+      - name: raw_upcoming_fixtures

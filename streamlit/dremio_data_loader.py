@@ -18,6 +18,17 @@ from datetime import date
 import pandas as pd
 
 from dremio_client import query
+from sports_betting.team_names import canonical_team_name
+
+
+def _normalise_team_cols(df: pd.DataFrame, *cols: str) -> pd.DataFrame:
+    """Apply canonical_team_name to each named column that exists in df."""
+    for col in cols:
+        if col in df.columns:
+            df[col] = df[col].apply(
+                lambda v: canonical_team_name(str(v)) if pd.notna(v) and v != "" else v
+            )
+    return df
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -88,7 +99,7 @@ def load_matches(as_of: date | None = None) -> pd.DataFrame:
     """
     df = query(sql)
     df["match_date"] = pd.to_datetime(df["match_date"])
-    return df
+    return _normalise_team_cols(df, "home_team", "away_team")
 
 
 def load_match_context(
@@ -151,8 +162,12 @@ def load_standings(
         filters.append(f"season_label = '{season_label}'")
 
     where = ("WHERE " + " AND ".join(filters)) if filters else ""
-    sql = f"SELECT * FROM semantic.gold_standings {where} ORDER BY position"
-    return query(sql)
+    sql = f"SELECT * FROM semantic.gold_standings {where} ORDER BY league_position"
+    df = query(sql)
+    # Normalise column name: dbt model outputs "league_position", app expects "position"
+    if not df.empty and "league_position" in df.columns:
+        df = df.rename(columns={"league_position": "position"})
+    return df
 
 
 def load_rest_fatigue(
@@ -193,7 +208,7 @@ def load_team_season_stats(
     if team:
         filters.append(f"team = '{team}'")
     if scope:
-        filters.append(f"scope = '{scope}'")
+        filters.append(f"match_scope = '{scope}'")
 
     where = ("WHERE " + " AND ".join(filters)) if filters else ""
     sql = f"SELECT * FROM semantic.gold_team_season_stats {where}"
@@ -230,6 +245,7 @@ def load_player_stats(
     df = query(sql)
     return df.rename(columns={
         "player_name": "player",
+        "player_position": "position",
         "games": "matches",
         "minutes_played": "minutes",
     })
@@ -261,6 +277,62 @@ def load_derby_pairs() -> set[frozenset[str]]:
 # ─────────────────────────────────────────────────────────────────────────────
 # Injuries (manually uploaded via upload_injuries.py)
 # ─────────────────────────────────────────────────────────────────────────────
+
+def load_upcoming_fixtures(
+    league_codes: list[str] | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> pd.DataFrame:
+    """Load upcoming (and recent) fixture data from silver_upcoming_fixtures.
+
+    Returns columns: match_date, league_code, league_name, home_team,
+    away_team, result_ft, espn_status.
+
+    Returns an empty DataFrame if the source has not been populated yet
+    (first run before the scheduler has executed).
+    """
+    filters: list[str] = []
+    if league_codes:
+        codes = ", ".join(f"'{c}'" for c in league_codes)
+        filters.append(f"league_code IN ({codes})")
+    if start_date:
+        filters.append(f"match_date >= DATE '{start_date.isoformat()}'")
+    if end_date:
+        filters.append(f"match_date <= DATE '{end_date.isoformat()}'")
+
+    where = ("WHERE " + " AND ".join(filters)) if filters else ""
+    sql = f"SELECT * FROM semantic.silver_upcoming_fixtures {where} ORDER BY match_date"
+    try:
+        df = query(sql)
+        if not df.empty and "match_date" in df.columns:
+            df["match_date"] = pd.to_datetime(df["match_date"])
+        return _normalise_team_cols(df, "home_team", "away_team")
+    except Exception:  # noqa: BLE001
+        return pd.DataFrame(
+            columns=["match_date", "league_code", "league_name", "home_team", "away_team", "result_ft", "espn_status"]
+        )
+
+
+def load_pipeline_status() -> pd.DataFrame:
+    """Return latest successful run per entity from pipeline_run metadata table.
+
+    Queries ``semantic.pipeline_run`` (a Dremio view over the PostgreSQL table)
+    and returns a summary DataFrame suitable for the sidebar freshness panel.
+    """
+    sql = """
+        SELECT entity_name, source_name,
+               MAX(completed_at) AS last_run,
+               MAX(row_count)    AS row_count
+        FROM semantic.pipeline_run
+        WHERE status = 'completed'
+        GROUP BY entity_name, source_name
+        ORDER BY entity_name
+    """
+    try:
+        return query(sql)
+    except Exception:  # noqa: BLE001
+        return pd.DataFrame(columns=["entity_name", "source_name", "last_run", "row_count"])
+
 
 def load_injuries(
     league_code: str | None = None,

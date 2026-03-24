@@ -127,6 +127,10 @@ def _fetch_data_sync(output_dir: Path, status_fn=None) -> str:
     except Exception as exc:  # noqa: BLE001
         return str(exc)
 
+# Production mode: when APP_ENV=production, CSV fallbacks are disabled and Dremio
+# outages raise visible errors instead of silently serving stale local data.
+_PRODUCTION: bool = os.getenv("APP_ENV", "development").lower() == "production"
+
 # Leagues we support — filters out stale Eredivisie rows still present in old CSVs
 SUPPORTED_LEAGUES: frozenset[str] = frozenset({
     "Premier League",
@@ -145,6 +149,16 @@ ESPN_LEAGUE_SLUGS: dict[str, str] = {
     "Bundesliga":     "ger.1",
     "Ligue 1":        "fra.1",
     "Primeira Liga":  "por.1",
+}
+
+# Maps league display name → football-data.co.uk code (used when querying Dremio)
+LEAGUE_NAME_TO_CODE: dict[str, str] = {
+    "Premier League": "E0",
+    "La Liga":        "SP1",
+    "Serie A":        "I1",
+    "Bundesliga":     "D1",
+    "Ligue 1":        "F1",
+    "Primeira Liga":  "P1",
 }
 
 _STALE_HOURS = 2.0   # auto-refresh threshold
@@ -254,7 +268,7 @@ UI_I18N: dict[str, dict[str, str]] = {
     "load_match_error": {"en": "Could not load match data: {err}", "pt_mz": "Não foi possível carregar dados de jogos: {err}"},
     "load_data_error": {"en": "Could not load data: {err}", "pt_mz": "Não foi possível carregar dados: {err}"},
     "training_models": {"en": "Training models…", "pt_mz": "A treinar modelos…"},
-    "xgb_fail": {"en": "XGBoost training failed. Install xgboost and retry. Details: {exc}", "pt_mz": "Falha no treino XGBoost. Instale xgboost e tente novamente. Detalhes: {exc}"},
+    "xgb_fail": {"en": "Model training error: {exc}", "pt_mz": "Erro ao treinar modelo: {exc}"},
     "match_center": {"en": "Match Center", "pt_mz": "Centro de Jogo"},
     "matchup_mode": {"en": "Matchup mode", "pt_mz": "Modo de confronto"},
     "same_league": {"en": "Same league", "pt_mz": "Mesma liga"},
@@ -276,7 +290,7 @@ UI_I18N: dict[str, dict[str, str]] = {
     "home_odd": {"en": "Home odd (1)", "pt_mz": "Odd casa (1)"},
     "draw_odd": {"en": "Draw odd (X)", "pt_mz": "Odd empate (X)"},
     "away_odd": {"en": "Away odd (2)", "pt_mz": "Odd fora (2)"},
-    "starting_xi": {"en": "Starting XI (optional — fetch online or enter manually)", "pt_mz": "XI inicial (opcional — buscar online ou inserir manualmente)"},
+    "starting_xi": {"en": "Starting XI (optional)", "pt_mz": "XI inicial (opcional)"},
     "fetch_xi": {"en": "Fetch probable XI online", "pt_mz": "Buscar XI provável online"},
     "h2h_lookback": {"en": "H2H years look-back", "pt_mz": "Anos de retrospetiva H2H"},
     "h2h_scope": {"en": "H2H scope", "pt_mz": "Âmbito H2H"},
@@ -408,7 +422,7 @@ UI_I18N: dict[str, dict[str, str]] = {
     "page2_season_stats": {"en": "#### Season Stats — Corners · Fouls · Cards", "pt_mz": "#### Estatísticas da época — Cantos · Faltas · Cartões"},
     "page2_rank_cutoff": {"en": "Rank cutoff (top N vs the rest)", "pt_mz": "Corte de ranking (top N vs restantes)"},
     "page2_no_team_season_matches": {"en": "No current-season match data found for this team.", "pt_mz": "Não foram encontrados jogos desta época para esta equipa."},
-    "page2_full_log": {"en": "Full match log — corners, fouls, cards", "pt_mz": "Log completo de jogos — cantos, faltas, cartões"},
+    "page2_full_log": {"en": "Full match log", "pt_mz": "Log completo de jogos"},
 }
 
 
@@ -440,29 +454,36 @@ def apply_style() -> None:
         <style>
 
         :root {
-          --bg:        #0d1117;
-          --bg-2:      #161b27;
-          --card:      #1c2333;
-          --card-2:    #212840;
-          --border:    rgba(148, 163, 184, 0.13);
-          --border-2:  rgba(148, 163, 184, 0.26);
-          --ink:       #e2e8f4;
-          --ink-2:     #94a3b8;
-          --accent:    #38bdf8;
+          --bg:        #0D1B2A;
+          --bg-2:      #1A2B3C;
+          --card:      #1A2B3C;
+          --card-2:    #1e3044;
+          --border:    rgba(255, 255, 255, 0.08);
+          --border-2:  rgba(255, 255, 255, 0.15);
+          --ink:       #E8EDF2;
+          --ink-2:     #9BAAB8;
+          --accent:    #60A5FA;
           --accent-2:  #818cf8;
           --green:     #34d399;
           --red:       #f87171;
-          --shadow:    0 8px 32px rgba(0, 0, 0, 0.5);
+          --orange:    #f97316;
+          --shadow:    0 12px 32px rgba(0, 0, 0, 0.25);
+          --shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.5);
         }
 
         /* ── Base layout ── */
-        html, body { font-family: 'Inter', sans-serif !important; }
+        html, body {
+          font-family: 'Inter', sans-serif !important;
+          font-size: 0.88rem;
+          font-weight: 500;
+          letter-spacing: 0.01em;
+        }
 
         [data-testid="stAppViewContainer"] {
           background: var(--bg) !important;
         }
         [data-testid="stHeader"] {
-          background: rgba(13, 17, 23, 0.85) !important;
+          background: rgba(13, 27, 42, 0.9) !important;
           backdrop-filter: blur(12px);
           border-bottom: 1px solid var(--border);
         }
@@ -481,24 +502,44 @@ def apply_style() -> None:
         }
         h1 {
           font-size: 2rem !important;
-          font-weight: 700 !important;
+          font-weight: 800 !important;
           letter-spacing: -0.03em !important;
           color: #ffffff !important;
         }
-        h2, h3 {
-          font-weight: 600 !important;
+        h2 {
+          font-weight: 700 !important;
           letter-spacing: -0.02em !important;
           color: #ffffff !important;
         }
+        h3 {
+          border-left: 3px solid var(--accent);
+          padding-left: 0.75rem;
+          color: var(--ink) !important;
+          font-size: 1.05rem !important;
+          font-weight: 700 !important;
+          letter-spacing: -0.01em !important;
+          margin-top: 1.75rem !important;
+        }
+        h4, h5, h6 {
+          color: var(--ink-2) !important;
+          font-weight: 600 !important;
+        }
         .stApp [data-testid="stCaptionContainer"] p {
           color: var(--ink-2) !important;
-          font-size: 0.9rem !important;
+          font-size: 0.8rem !important;
+        }
+
+        /* ── Horizontal rules ── */
+        hr {
+          border: none !important;
+          border-top: 1px solid rgba(96, 165, 250, 0.1) !important;
+          margin: 1.5rem 0 !important;
         }
 
         /* ── Sidebar ── */
         [data-testid="stSidebar"] {
           background: var(--bg-2) !important;
-          border-right: 1px solid var(--border);
+          border-right: 1px solid rgba(255, 255, 255, 0.06);
         }
         [data-testid="stSidebar"] h1,
         [data-testid="stSidebar"] h2,
@@ -508,9 +549,15 @@ def apply_style() -> None:
         [data-testid="stSidebar"] span {
           color: var(--ink) !important;
         }
+        [data-testid="stSidebar"] label,
+        [data-testid="stSidebar"] .stCaption {
+          color: var(--ink-2) !important;
+          font-size: 0.8rem;
+        }
 
         /* ── Inputs / selects / sliders ── */
         [data-testid="stSelectbox"] > div,
+        [data-baseweb="select"] > div,
         [data-testid="stNumberInput"] input,
         [data-testid="stTextInput"] input,
         [data-testid="stTextArea"] textarea,
@@ -518,22 +565,37 @@ def apply_style() -> None:
           background: var(--card-2) !important;
           border: 1px solid var(--border-2) !important;
           color: var(--ink) !important;
-          border-radius: 8px !important;
+          border-radius: 6px !important;
         }
         [data-testid="stSelectbox"] svg { color: var(--ink-2) !important; }
 
         /* ── Buttons ── */
         [data-testid="stButton"] > button {
-          background: linear-gradient(135deg, #1e3a5f 0%, #1a3050 100%) !important;
-          border: 1px solid var(--accent) !important;
-          color: var(--accent) !important;
-          border-radius: 8px !important;
+          background: transparent !important;
+          border: 1px solid rgba(255, 255, 255, 0.15) !important;
+          color: var(--ink-2) !important;
+          border-radius: 6px !important;
           font-weight: 600 !important;
-          transition: all 0.2s ease;
+          font-size: 0.88rem !important;
+          transition: all 0.15s ease;
         }
         [data-testid="stButton"] > button:hover {
+          border-color: rgba(96, 165, 250, 0.5) !important;
+          color: var(--accent) !important;
+          background: transparent !important;
+        }
+        /* Primary button (type="primary") */
+        [data-testid="stButton"] > button[kind="primary"],
+        [data-testid="stBaseButton-primary"] {
           background: var(--accent) !important;
-          color: #000 !important;
+          border: none !important;
+          color: #0D1B2A !important;
+          font-weight: 700 !important;
+        }
+        [data-testid="stButton"] > button[kind="primary"]:hover,
+        [data-testid="stBaseButton-primary"]:hover {
+          filter: brightness(1.1);
+          color: #0D1B2A !important;
         }
 
         /* ── Tabs ── */
@@ -548,26 +610,31 @@ def apply_style() -> None:
           background: transparent !important;
           color: var(--ink-2) !important;
           border-radius: 9px !important;
-          font-weight: 600 !important;
-          font-size: 0.9rem !important;
+          font-weight: 500 !important;
+          font-size: 0.88rem !important;
+          letter-spacing: 0.01em !important;
           padding: 0.35rem 1rem !important;
           min-height: 2.4rem !important;
           border: none !important;
-          transition: all 0.2s ease;
+          transition: all 0.15s ease;
           white-space: normal !important;
           line-height: 1.2 !important;
           text-align: center !important;
         }
+        [data-testid="stTabs"] [data-baseweb="tab"]:hover {
+          color: var(--ink) !important;
+        }
         [data-testid="stTabs"] [aria-selected="true"] {
           background: var(--card-2) !important;
           color: var(--accent) !important;
+          font-weight: 700 !important;
           border: 1px solid var(--border-2) !important;
         }
 
         /* ── DataFrames ── */
         [data-testid="stDataFrame"] {
           border: 1px solid var(--border) !important;
-          border-radius: 12px !important;
+          border-radius: 8px !important;
           overflow: hidden !important;
           background: var(--card) !important;
         }
@@ -575,13 +642,27 @@ def apply_style() -> None:
         /* ── Metric widgets ── */
         [data-testid="stMetric"] {
           background: var(--card) !important;
-          border: 1px solid var(--border) !important;
-          border-radius: 12px !important;
-          padding: 1rem 1.2rem !important;
+          border: 1px solid rgba(96, 165, 250, 0.15) !important;
+          border-radius: 10px !important;
+          padding: 1rem 1.25rem !important;
         }
-        [data-testid="stMetricLabel"] p { color: var(--ink-2) !important; font-size: 0.8rem !important; font-weight: 600 !important; text-transform: uppercase !important; letter-spacing: 0.06em !important; }
-        [data-testid="stMetricValue"] { color: #ffffff !important; font-size: 1.15rem !important; font-weight: 700 !important; }
-        [data-testid="stMetricDelta"] { color: var(--green) !important; font-size: 0.82rem !important; font-weight: 600 !important; }
+        [data-testid="stMetricLabel"] p {
+          color: var(--ink-2) !important;
+          font-size: 0.78rem !important;
+          font-weight: 500 !important;
+          text-transform: uppercase !important;
+          letter-spacing: 0.05em !important;
+        }
+        [data-testid="stMetricValue"] {
+          color: var(--accent) !important;
+          font-size: 1.6rem !important;
+          font-weight: 700 !important;
+        }
+        [data-testid="stMetricDelta"] {
+          color: var(--green) !important;
+          font-size: 0.82rem !important;
+          font-weight: 600 !important;
+        }
 
         /* ── Expander ── */
         [data-testid="stExpander"] {
@@ -589,12 +670,54 @@ def apply_style() -> None:
           border: 1px solid var(--border) !important;
           border-radius: 10px !important;
         }
-        [data-testid="stExpander"] summary p { color: var(--ink) !important; font-weight: 600 !important; }
+        [data-testid="stExpander"] summary {
+          display: flex !important;
+          align-items: center !important;
+          overflow: hidden !important;
+          min-width: 0 !important;
+        }
+        /* Cover p / span / div wrappers Streamlit may inject between summary and text */
+        [data-testid="stExpander"] summary p,
+        [data-testid="stExpander"] summary span,
+        [data-testid="stExpander"] summary div {
+          color: var(--ink) !important;
+          font-weight: 600 !important;
+          white-space: nowrap !important;
+          overflow: hidden !important;
+          text-overflow: ellipsis !important;
+          flex: 1 1 0 !important;
+          min-width: 0 !important;
+        }
+        /* Keep the chevron SVG from being squashed or pushed off-screen */
+        [data-testid="stExpander"] summary svg {
+          flex-shrink: 0 !important;
+          width: 1.1rem !important;
+          height: 1.1rem !important;
+        }
 
-        /* ── Alerts ── */
+        /* ── Alerts — left-border colour by type ── */
         [data-testid="stAlert"] {
+          background: var(--card) !important;
           border-radius: 10px !important;
           border: 1px solid var(--border-2) !important;
+          color: var(--ink) !important;
+        }
+        [data-testid="stAlert"][data-baseweb="notification"][kind="info"],
+        div[data-testid="stInfo"] {
+          border-left: 4px solid var(--accent) !important;
+          background: var(--card) !important;
+        }
+        div[data-testid="stWarning"] {
+          border-left: 4px solid var(--orange) !important;
+          background: var(--card) !important;
+        }
+        div[data-testid="stSuccess"] {
+          border-left: 4px solid var(--green) !important;
+          background: var(--card) !important;
+        }
+        div[data-testid="stError"] {
+          border-left: 4px solid var(--red) !important;
+          background: var(--card) !important;
         }
 
         /* ── Custom panel & metric divs ── */
@@ -602,14 +725,19 @@ def apply_style() -> None:
           background: var(--card);
           border: 1px solid var(--border);
           border-radius: 16px;
-          padding: 16px 20px;
+          padding: 1.75rem;
           box-shadow: var(--shadow);
           margin-bottom: 1rem;
+          transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .panel:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
         }
         .metric {
           background: var(--card-2);
           border-left: 3px solid var(--accent);
-          border-radius: 12px;
+          border-radius: 10px;
           padding: 12px 16px;
           font-weight: 700;
           color: var(--ink) !important;
@@ -646,13 +774,10 @@ def apply_style() -> None:
           font-weight: 400;
         }
 
-        /* ── Subheader accent lines — main content only ── */
-        /* Streamlit 1.30-1.45: main area is .main > .block-container          or [data-testid="stMain"] > .block-container */
+        /* ── Subheader accent lines — h2/h4 only (h3 uses border-left instead) ── */
         .main .block-container h2::after,
-        .main .block-container h3::after,
         .main .block-container h4::after,
         [data-testid="stMain"] h2::after,
-        [data-testid="stMain"] h3::after,
         [data-testid="stMain"] h4::after {
           content: '';
           display: block;
@@ -743,11 +868,58 @@ def apply_style() -> None:
           max-width: calc(100% - 1.5rem) !important;
         }
 
+        /* ── Suppress "Ready ✓" residual from st.spinner in Streamlit 1.37+ ── */
+        /* The completed status widget collapses but stays in the DOM; hide it. */
+        [data-testid="stStatusWidget"][aria-expanded="false"],
+        [data-testid="stStatusWidget"] + div[data-testid="stStatusWidgetLabel"],
+        div[class*="StatusWidget"][data-status="complete"] {
+          display: none !important;
+        }
+
         /* ── Scrollbar ── */
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: var(--bg-2); }
         ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: var(--ink-2); }
+
+        /* ── Sidebar: suppress overflow from collapse-arrow button ── */
+        [data-testid="stSidebar"] > div:first-child,
+        [data-testid="stSidebarContent"] {
+          overflow-x: hidden !important;
+        }
+        /* Hide the redundant inner collapse button inside the sidebar.
+           The outer >/< toggle on the sidebar edge still collapses it. */
+        [data-testid="stSidebarCollapseButton"],
+        [data-testid="collapsedControl"],
+        button[kind="headerNoPadding"] {
+          display: none !important;
+        }
+
+        /* ── Language toggle buttons — larger hit area ── */
+        [data-testid="stSidebar"] [data-testid="stHorizontalBlock"] button {
+          min-height: 2.6rem !important;
+          font-size: 1rem !important;
+          font-weight: 600 !important;
+          letter-spacing: 0.02em !important;
+        }
+
+        /* ── Market tile toggles — compact pill style ── */
+        [data-testid="stMain"] [data-testid="stHorizontalBlock"] button[kind="secondary"] {
+          padding: 0.25rem 0.4rem !important;
+          font-size: 0.78rem !important;
+          min-height: 1.9rem !important;
+          border-color: var(--border-2) !important;
+          color: var(--ink-2) !important;
+        }
+        [data-testid="stMain"] [data-testid="stHorizontalBlock"] button[kind="primary"] {
+          padding: 0.25rem 0.4rem !important;
+          font-size: 0.78rem !important;
+          min-height: 1.9rem !important;
+        }
+
+        /* ── Links ── */
+        a, .stMarkdown a { color: var(--accent) !important; }
+        a:hover, .stMarkdown a:hover { color: #3B82F6 !important; }
         </style>
         """,
         unsafe_allow_html=True,
@@ -795,13 +967,11 @@ def _start_background(cmd: list[str], log_file: Path) -> int:
 
 def run_refresh(start_season: int, end_season: int, min_date: date) -> int:
     """No-op: data is refreshed automatically by the DE pipeline (4×/day)."""
-    st.info("Match data is refreshed automatically by the scheduled pipeline (4×/day).")
     return 0
 
 
 def run_player_stats_refresh(api_key: str = "", season: str = "2526") -> int:
     """No-op: player stats are refreshed weekly by the DE pipeline."""
-    st.info("Player stats are refreshed weekly by the scheduled pipeline.")
     return 0
 
 
@@ -829,6 +999,14 @@ def load_player_stats(path: str) -> pd.DataFrame:
         df["team"] = df["team"].str.strip()
     if "player" in df.columns:
         df["player"] = df["player"].str.strip()
+    # Deduplicate: keep only the most recent season per player+team combination.
+    # gold_player_stats may contain rows for multiple seasons; show only the latest.
+    if "season_label" in df.columns and "player" in df.columns and "team" in df.columns:
+        df = (
+            df.sort_values("season_label", ascending=False)
+            .drop_duplicates(subset=["player", "team"], keep="first")
+            .reset_index(drop=True)
+        )
     return df
 
 
@@ -908,43 +1086,78 @@ def _player_columns(contrib_df: pd.DataFrame) -> tuple[str | None, str | None]:
     return team_col, player_col
 
 
-def lineup_strength(team: str, lineup: list[str], contrib_df: pd.DataFrame, as_of_ts: pd.Timestamp) -> float:
-    if contrib_df.empty:
-        return 0.0
-    team_col, player_col = _player_columns(contrib_df)
-    if team_col is None or player_col is None or "match_date" not in contrib_df.columns:
-        return 0.0
+def lineup_strength(
+    team: str,
+    lineup: list[str],
+    contrib_df: pd.DataFrame,
+    as_of_ts: pd.Timestamp,
+    player_stats_df: pd.DataFrame | None = None,
+) -> float:
+    """Compute a lineup quality score for a team.
 
-    df = contrib_df.copy()
-    df["match_date"] = pd.to_datetime(df["match_date"], errors="coerce")
-    df = df.loc[df["match_date"].notna() & (df["match_date"] <= as_of_ts) & (df[team_col] == team)].copy()
-    if df.empty:
-        return 0.0
+    Priority:
+    1. Per-match contrib_df (match-level goal/assist/xG data).
+    2. Season player stats from gold_player_stats (per-90 rates, no match_date needed).
+    3. Returns 0.0 if neither source has data for the team.
+    """
+    # ── Source 1: per-match contribution data ────────────────────────────────
+    if not contrib_df.empty:
+        team_col, player_col = _player_columns(contrib_df)
+        if team_col is not None and player_col is not None and "match_date" in contrib_df.columns:
+            df = contrib_df.copy()
+            df["match_date"] = pd.to_datetime(df["match_date"], errors="coerce")
+            df = df.loc[df["match_date"].notna() & (df["match_date"] <= as_of_ts) & (df[team_col] == team)].copy()
+            if not df.empty:
+                for c in ("goals", "assists", "xg", "xa", "key_passes", "rating"):
+                    if c not in df.columns:
+                        df[c] = 0.0
+                    df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
+                df["impact"] = (
+                    1.5 * df["goals"]
+                    + 1.1 * df["assists"]
+                    + 0.8 * df["xg"]
+                    + 0.6 * df["xa"]
+                    + 0.10 * df["key_passes"]
+                    + 0.2 * df["rating"]
+                )
+                by_player = df.groupby(player_col, dropna=False)["impact"].mean().sort_values(ascending=False)
+                if not by_player.empty:
+                    if lineup:
+                        sel = by_player.loc[by_player.index.astype(str).isin(set(map(str, lineup)))]
+                        if sel.empty:
+                            sel = by_player.head(11)
+                        return float(sel.mean())
+                    return float(by_player.head(11).mean())
 
-    for c in ("goals", "assists", "xg", "xa", "key_passes", "rating"):
-        if c not in df.columns:
-            df[c] = 0.0
-        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
+    # ── Source 2: season aggregate stats (gold_player_stats per 90) ──────────
+    if player_stats_df is not None and not player_stats_df.empty:
+        team_col = "team" if "team" in player_stats_df.columns else None
+        player_col = "player" if "player" in player_stats_df.columns else "player_name" if "player_name" in player_stats_df.columns else None
+        if team_col is not None and player_col is not None:
+            ps = player_stats_df.loc[player_stats_df[team_col] == team].copy()
+            if not ps.empty:
+                for c in ("goals", "assists", "xg", "xa", "key_passes", "minutes"):
+                    if c not in ps.columns:
+                        ps[c] = 0.0
+                    ps[c] = pd.to_numeric(ps[c], errors="coerce").fillna(0.0)
+                ps["_min90"] = (ps["minutes"] / 90.0).clip(lower=0.5)
+                ps["impact_p90"] = (
+                    1.5 * ps["goals"]
+                    + 1.1 * ps["assists"]
+                    + 0.8 * ps["xg"]
+                    + 0.6 * ps.get("xa", 0.0)
+                    + 0.10 * ps.get("key_passes", 0.0)
+                ) / ps["_min90"]
+                by_player = ps.set_index(player_col)["impact_p90"].sort_values(ascending=False)
+                if not by_player.empty:
+                    if lineup:
+                        sel = by_player.loc[by_player.index.astype(str).isin(set(map(str, lineup)))]
+                        if sel.empty:
+                            sel = by_player.head(11)
+                        return float(sel.mean())
+                    return float(by_player.head(11).mean())
 
-    df["impact"] = (
-        1.5 * df["goals"]
-        + 1.1 * df["assists"]
-        + 0.8 * df["xg"]
-        + 0.6 * df["xa"]
-        + 0.10 * df["key_passes"]
-        + 0.2 * df["rating"]
-    )
-
-    by_player = df.groupby(player_col, dropna=False)["impact"].mean().sort_values(ascending=False)
-    if by_player.empty:
-        return 0.0
-
-    if lineup:
-        sel = by_player.loc[by_player.index.astype(str).isin(set(map(str, lineup)))]
-        if sel.empty:
-            sel = by_player.head(11)
-        return float(sel.mean())
-    return float(by_player.head(11).mean())
+    return 0.0
 
 
 def build_context(
@@ -953,7 +1166,9 @@ def build_context(
 ) -> tuple[dict[str, object], str]:
     try:
         df = dremio_data_loader.load_matches(as_of=as_of_date)
-    except Exception:  # noqa: BLE001
+    except Exception as _exc:  # noqa: BLE001
+        if _PRODUCTION:
+            return {}, f"Platform unavailable: {_exc}. Check Dremio connection."
         # Dev / offline fallback: auto-discover a local CSV when Dremio is unreachable.
         _csv = _find_csv("top6_plus_portugal_matches_odds_since2022.csv", "MATCHES_CSV")
         if _csv is None:
@@ -1001,6 +1216,28 @@ def build_context(
     contrib_df = pd.DataFrame()
     other_df = pd.DataFrame()
 
+    # Season-aggregate player stats (gold_player_stats via Dremio, CSV fallback)
+    player_stats_df = load_player_stats(str(PLAYER_STATS_FILE))
+
+    # ── Pre-computed gold features (Dremio) ───────────────────────────────────
+    # These replace in-app recomputation of rolling form, standings, and rest/fatigue.
+    # Graceful degradation: empty DataFrame if Dremio unavailable.
+    try:
+        match_context_df = dremio_data_loader.load_match_context(as_of=as_of_date)
+    except Exception:  # noqa: BLE001
+        match_context_df = pd.DataFrame()
+
+    try:
+        rest_fatigue_df = dremio_data_loader.load_rest_fatigue(as_of=as_of_date)
+    except Exception:  # noqa: BLE001
+        rest_fatigue_df = pd.DataFrame()
+
+    try:
+        latest_season = historical["season_label"].dropna().max()
+        standings_df = dremio_data_loader.load_standings(season_label=latest_season)
+    except Exception:  # noqa: BLE001
+        standings_df = pd.DataFrame()
+
     snapshot = build_team_snapshot(
         historical=historical,
         as_of_date=as_of_ts,
@@ -1008,13 +1245,15 @@ def build_context(
         injuries_df=injuries_df,
         player_contrib_df=contrib_df,
         other_comp_df=other_df,
+        player_stats_df=player_stats_df if not player_stats_df.empty else None,
     )
     league_lookup = historical[["league_code", "league_name"]].drop_duplicates()
     snapshot = snapshot.merge(league_lookup, on="league_code", how="left")
 
     # Current-season snapshot: used only for standings display so points/matches
     # reflect the ongoing season rather than cumulative multi-season totals.
-    latest_season = historical["season_label"].dropna().max()
+    # latest_season already computed above in the gold features block.
+    latest_season = historical["season_label"].dropna().max()  # noqa: F841 (re-bind for clarity)
     current_hist = historical.loc[historical["season_label"] == latest_season].copy()
     if current_hist.empty:
         current_hist = historical
@@ -1025,6 +1264,7 @@ def build_context(
         injuries_df=injuries_df,
         player_contrib_df=contrib_df,
         other_comp_df=other_df,
+        player_stats_df=player_stats_df if not player_stats_df.empty else None,
     )
     current_snapshot = current_snapshot.merge(league_lookup, on="league_code", how="left")
 
@@ -1037,6 +1277,10 @@ def build_context(
         "injuries_df": injuries_df,
         "contrib_df": contrib_df,
         "other_df": other_df,
+        "player_stats_df": player_stats_df,
+        "match_context_df": match_context_df,
+        "rest_fatigue_df": rest_fatigue_df,
+        "standings_df": standings_df,
         "current_season": latest_season,
     }, ""
 
@@ -1188,6 +1432,10 @@ def build_feature_vector(
         "h2h_gap": float(h2h.get("h2h_gap", 0.0)),
         "h2h_goal_diff": float(h2h.get("h2h_goal_diff_pg", 0.0)),
         "injury_gap": float(away.get("injury_impact", 0.0) - home.get("injury_impact", 0.0)),
+        # Suspension gap: positive → away team has more suspended/at-risk players (advantage home)
+        "suspension_gap": float(away.get("suspended_impact", 0.0) - home.get("suspended_impact", 0.0)),
+        # Key player gap: season-level squad quality from gold_player_stats (xG/goals/assists per 90)
+        "key_player_gap": float(home.get("key_player_impact", 0.0) - away.get("key_player_impact", 0.0)),
         "lineup_strength_gap": float(home_lineup_strength - away_lineup_strength),
         "league_idx": league_idx,
         # ── NEW v2 features ────────────────────────────────────────────────
@@ -1218,19 +1466,26 @@ def choose_risk_bets(
     lang: str = "en",
 ) -> list[dict[str, str | float]]:
     ev = {k: probs[k] * odds[k] - 1.0 for k in probs}
-    conservative = max(probs.items(), key=lambda x: x[1])[0]
+    all_keys = list(probs.keys())
 
-    moderate_candidates = [k for k in probs if probs[k] >= 0.25]
-    if moderate_candidates:
-        moderate = max(moderate_candidates, key=lambda k: ev[k])
-    else:
-        moderate = max(ev, key=ev.get)
+    # Conservative: highest probability outcome
+    conservative = max(all_keys, key=lambda k: probs[k])
 
-    high_candidates = [k for k in probs if odds[k] >= np.median(list(odds.values()))]
-    if high_candidates:
-        high = max(high_candidates, key=lambda k: ev[k])
-    else:
-        high = max(ev, key=ev.get)
+    # Moderate: highest EV among outcomes that are NOT the conservative pick
+    mod_pool = [k for k in all_keys if k != conservative and probs[k] >= 0.20]
+    if not mod_pool:
+        mod_pool = [k for k in all_keys if k != conservative]
+    if not mod_pool:
+        mod_pool = all_keys  # only 1 outcome available, fallback
+    moderate = max(mod_pool, key=lambda k: ev[k])
+
+    # High Risk: highest odds outcome excluding conservative and moderate
+    high_pool = [k for k in all_keys if k not in (conservative, moderate)]
+    if not high_pool:
+        high_pool = [k for k in all_keys if k != conservative]
+    if not high_pool:
+        high_pool = all_keys  # only 1 outcome available, fallback
+    high = max(high_pool, key=lambda k: odds[k])
 
     return [
         {
@@ -1476,14 +1731,10 @@ def fetch_upcoming_fixtures_espn(
             for ev in resp.json().get("events", []):
                 comp = (ev.get("competitions") or [{}])[0]
                 competitors = comp.get("competitors", [])
-                home_team = next(
-                    (c["team"]["displayName"] for c in competitors if c.get("homeAway") == "home"),
-                    "",
-                )
-                away_team = next(
-                    (c["team"]["displayName"] for c in competitors if c.get("homeAway") == "away"),
-                    "",
-                )
+                home_c = next((c for c in competitors if c.get("homeAway") == "home"), {})
+                away_c = next((c for c in competitors if c.get("homeAway") == "away"), {})
+                home_team = home_c.get("team", {}).get("displayName", "")
+                away_team = away_c.get("team", {}).get("displayName", "")
                 try:
                     md = pd.Timestamp(ev.get("date", ""))
                 except Exception:
@@ -1491,12 +1742,23 @@ def fetch_upcoming_fixtures_espn(
                 # Only include matches in the requested window
                 if not (start_date <= md.date() <= end_date):
                     continue
+                # Derive result for completed matches
+                espn_status = comp.get("status", {}).get("type", {}).get("name", "")
+                if espn_status == "STATUS_FULL_TIME":
+                    try:
+                        hs = int(home_c.get("score", 0))
+                        as_ = int(away_c.get("score", 0))
+                        result_ft = "H" if hs > as_ else ("A" if as_ > hs else "D")
+                    except (TypeError, ValueError):
+                        result_ft = pd.NA
+                else:
+                    result_ft = pd.NA
                 rows.append({
                     "match_date":  md,
                     "league_name": league_name,
                     "home_team":   _TEAM_MAP.get(home_team, home_team),
                     "away_team":   _TEAM_MAP.get(away_team, away_team),
-                    "result_ft":   pd.NA,
+                    "result_ft":   result_ft,
                 })
         except Exception as exc:  # noqa: BLE001
             errors.append(f"{league_name}: {exc}")
@@ -2504,25 +2766,29 @@ def main() -> None:
     other_file = Path("data/sports/external/other_competitions_matches.csv")
 
     with st.sidebar:
-        if hasattr(st, "segmented_control"):
-            lang = st.segmented_control(
-                "Language / Idioma",
-                options=list(LANGUAGE_OPTIONS.keys()),
-                format_func=lambda k: LANGUAGE_OPTIONS[k],
-                selection_mode="single",
-                default=st.session_state.get("ui_lang", "en"),
-                key="ui_lang",
-            )
-            if not lang:
-                lang = st.session_state.get("ui_lang", "en")
-        else:
-            lang = st.radio(
-                "Language / Idioma",
-                options=list(LANGUAGE_OPTIONS.keys()),
-                format_func=lambda k: LANGUAGE_OPTIONS[k],
-                key="ui_lang",
-                horizontal=True,
-            )
+        # ── Language toggle — BM-style two-button row ─────────────────────────
+        if "ui_lang" not in st.session_state:
+            st.session_state["ui_lang"] = "en"
+        lang = st.session_state.get("ui_lang", "en")
+        _lc1, _lc2 = st.columns(2)
+        with _lc1:
+            if st.button(
+                "🇬🇧 EN",
+                use_container_width=True,
+                type="primary" if lang == "en" else "secondary",
+                key="_lang_en",
+            ):
+                st.session_state["ui_lang"] = "en"
+                st.rerun()
+        with _lc2:
+            if st.button(
+                "🇲🇿 PT",
+                use_container_width=True,
+                type="primary" if lang == "pt_mz" else "secondary",
+                key="_lang_pt",
+            ):
+                st.session_state["ui_lang"] = "pt_mz"
+                st.rerun()
 
         st.header(ui_t(lang, "settings_header"))
         as_of = st.date_input(ui_t(lang, "as_of_date"), value=ref_date)
@@ -2542,32 +2808,14 @@ def main() -> None:
             help=ui_t(lang, "api_key_help"),
         )
 
-        st.divider()
-        st.subheader(ui_t(lang, "refresh_data"))
-        st.caption(ui_t(lang, "refresh_caption"))
-        refresh_start = st.number_input(
-            ui_t(lang, "start_season"), min_value=1995, max_value=2100, value=ref_date.year - 20
-        )
-        refresh_end = st.number_input(
-            ui_t(lang, "end_season"), min_value=1995, max_value=2100, value=ref_date.year
-        )
-        refresh_min_date = st.date_input(
-            ui_t(lang, "min_match_date"), value=date(ref_date.year - 20, 1, 1)
-        )
-
-        if st.button(ui_t(lang, "refresh_all"), use_container_width=True):
-            pid_m = run_refresh(int(refresh_start), int(refresh_end), refresh_min_date)
-            pid_p = run_player_stats_refresh(api_key=api_key, season="2526")
-            ts = datetime.now().strftime("%H:%M:%S")
-            st.session_state["_refresh_ts"] = ts
-            st.session_state["_refresh_pids"] = (pid_m, pid_p)
-            st.toast(ui_t(lang, "refresh_started", ts=ts, pid_m=pid_m, pid_p=pid_p), icon="🚀")
-
-        if "_refresh_ts" in st.session_state:
-            st.info(
-                ui_t(lang, "last_refresh_started", ts=st.session_state["_refresh_ts"]),
-                icon="ℹ️",
-            )
+        # ── Production platform validation warning ────────────────────────────
+        if _PRODUCTION:
+            try:
+                _pm_check = dremio_data_loader.load_matches()
+                if _pm_check.empty:
+                    st.error("Platform: silver_matches is empty. Check Dremio.")
+            except Exception as _pexc:
+                st.error(f"Platform unavailable: {_pexc}")
 
         # ── Last-updated metadata display ─────────────────────────────────────
         _meta = load_refresh_metadata()
@@ -2634,33 +2882,29 @@ def main() -> None:
                 icon="🔄",
             )
 
-    with st.spinner(ui_t(lang, "loading_data")):
-        context, err = _cached_context(as_of, momentum_window)
+    _load_ph = st.empty()
+    with _load_ph.container():
+        with st.spinner(ui_t(lang, "loading_data")):
+            context, err = _cached_context(as_of, momentum_window)
+    _load_ph.empty()
     if err:
         st.error(ui_t(lang, "load_data_error", err=err))
         st.stop()
 
+    _train_ph = st.empty()
     try:
-        with st.spinner(ui_t(lang, "training_models")):
-            match_model, player_models = _cached_models(
-                context["historical"], context["injuries_df"], context["contrib_df"]
-            )
+        with _train_ph.container():
+            with st.spinner(ui_t(lang, "training_models")):
+                match_model, player_models = _cached_models(
+                    context["historical"], context["injuries_df"], context["contrib_df"]
+                )
     except Exception as exc:  # noqa: BLE001
+        _train_ph.empty()
         st.error(ui_t(lang, "xgb_fail", exc=exc))
         st.stop()
+    _train_ph.empty()
 
-    # ── Model quality badge (sidebar) ────────────────────────────────────────
-    if match_model is not None and (match_model.brier_score > 0 or match_model.log_loss_val > 0):
-        with st.sidebar:
-            with st.expander("📊 Model Quality", expanded=False):
-                n_feats = len(match_model.feature_cols)
-                st.caption(
-                    f"**v2 XGBoost** · {n_feats} features · calibrated\n\n"
-                    f"Holdout Brier: `{match_model.brier_score:.4f}` "
-                    f"(lower = better; random ≈ 0.22)\n\n"
-                    f"Holdout log-loss: `{match_model.log_loss_val:.4f}` "
-                    f"(lower = better; random ≈ 1.10)"
-                )
+    # Model quality metrics are internal — not shown in UI
 
     with tab_match:
         st.subheader(ui_t(lang, "match_center"))
@@ -2751,6 +2995,7 @@ def main() -> None:
             injuries_df=context["injuries_df"],
             contrib_df=context["contrib_df"],
             top_n=8,
+            player_stats_df=context.get("player_stats_df"),
         )
         pi1, pi2, pi3 = st.columns(3)
         with pi1:
@@ -2780,6 +3025,54 @@ def main() -> None:
                 st.caption(ui_t(lang, "no_contrib_data"))
             else:
                 st.dataframe(insights["likely_cards"], use_container_width=True, hide_index=True)
+
+        # ── Suspension & key player alerts ───────────────────────────────────
+        _snap_for_alerts = context["current_snapshot"]
+        _h_snap = _team_row(_snap_for_alerts, home_league, home_team)
+        _a_snap = _team_row(_snap_for_alerts, away_league, away_team)
+
+        _suspension_alerts: list[str] = []
+        _key_player_notes: list[str] = []
+
+        for _team_label, _tsnap in [(home_team, _h_snap), (away_team, _a_snap)]:
+            if _tsnap.empty:
+                continue
+            _suspended = float(_tsnap.get("suspended_count", 0.0))
+            _at_risk = _suspended > 0 and _suspended < 1.0  # fractional = at-risk, not confirmed
+            if _suspended >= 1.0:
+                _n = int(_suspended)
+                _suspension_alerts.append(
+                    f"🚫 **{_team_label}**: {_n} player(s) suspended for next match."
+                )
+            elif _at_risk:
+                _suspension_alerts.append(
+                    f"⚠️ **{_team_label}**: player(s) one yellow card away from suspension."
+                )
+            _top_name = str(_tsnap.get("top_player_name", "")) or None
+            _top_imp = float(_tsnap.get("top_player_impact", 0.0))
+            if _top_name:
+                _key_player_notes.append(
+                    f"⭐ **{_team_label}** key player: **{_top_name}** "
+                    f"(impact score {_top_imp:.2f}/90)"
+                )
+
+        if _suspension_alerts or _key_player_notes:
+            st.markdown("---")
+            _sal_c1, _sal_c2 = st.columns(2)
+            with _sal_c1:
+                st.markdown("**🚫 Suspensions / Card Risk**")
+                if _suspension_alerts:
+                    for _msg in _suspension_alerts:
+                        st.markdown(_msg)
+                else:
+                    st.caption("No suspensions or card risk detected.")
+            with _sal_c2:
+                st.markdown("**⭐ Key Players**")
+                if _key_player_notes:
+                    for _msg in _key_player_notes:
+                        st.markdown(_msg)
+                else:
+                    st.caption("Player data unavailable.")
 
         # ── 4. Auto-suggested odds ───────────────────────────────────────────
         st.markdown("---")
@@ -2878,8 +3171,9 @@ def main() -> None:
             if match_model is None:
                 st.warning(ui_t(lang, "not_enough_train_data"))
             else:
-                home_strength = lineup_strength(home_team, home_xi, context["contrib_df"], context["as_of_ts"])
-                away_strength = lineup_strength(away_team, away_xi, context["contrib_df"], context["as_of_ts"])
+                _pstats_for_lineup = context.get("player_stats_df", pd.DataFrame())
+                home_strength = lineup_strength(home_team, home_xi, context["contrib_df"], context["as_of_ts"], _pstats_for_lineup)
+                away_strength = lineup_strength(away_team, away_xi, context["contrib_df"], context["as_of_ts"], _pstats_for_lineup)
                 features, h2h = build_feature_vector(
                     context=context,
                     league_name=home_league,
@@ -2962,14 +3256,37 @@ def main() -> None:
     with tab_league:
         st.subheader(ui_t(lang, "league_players"))
         current_snapshot = context["current_snapshot"].copy()
+        _pre_standings = context.get("standings_df")
+        # Prefer pre-computed standings from gold_standings if available (has accurate
+        # league_position, PPG, and W-D-L already derived by dbt).
+        # Fallback: derive from current_snapshot (in-app computation).
+        if _pre_standings is not None and not _pre_standings.empty and "league_name" not in _pre_standings.columns:
+            _league_lookup = context["historical"][["league_code", "league_name"]].drop_duplicates()
+            _pre_standings = _pre_standings.merge(_league_lookup, on="league_code", how="left")
         leagues = sorted(
             l for l in current_snapshot["league_name"].dropna().unique()
             if l in SUPPORTED_LEAGUES
         )
         league = st.selectbox(ui_t(lang, "select_league"), leagues, key="page2_league")
-        league_table = current_snapshot.loc[current_snapshot["league_name"] == league].sort_values(
-            ["position", "points", "goal_diff"], ascending=[True, False, False]
-        )
+        # Use gold_standings if available; otherwise fall back to in-app snapshot
+        _league_code_sel = LEAGUE_NAME_TO_CODE.get(league)
+        if (
+            _pre_standings is not None
+            and not _pre_standings.empty
+            and _league_code_sel
+            and "position" in _pre_standings.columns
+        ):
+            league_table = _pre_standings.loc[_pre_standings["league_code"] == _league_code_sel].sort_values("position")
+            # Merge in form/injury columns from snapshot that gold_standings doesn't have
+            _snap_cols = [c for c in ["team", "last_points_pg", "last_goals_for_pg", "last_goals_against_pg",
+                                      "home_ppg", "away_ppg", "injury_count", "injury_impact"] if c in current_snapshot.columns]
+            if _snap_cols:
+                _snap_merge = current_snapshot[_snap_cols].copy()
+                league_table = league_table.merge(_snap_merge, on="team", how="left")
+        else:
+            league_table = current_snapshot.loc[current_snapshot["league_name"] == league].sort_values(
+                ["position", "points", "goal_diff"], ascending=[True, False, False]
+            )
 
         st.markdown(ui_t(lang, "standings_title", season=context["current_season"]))
 
@@ -2995,8 +3312,11 @@ def main() -> None:
             "last_goals_against_pg",
             "injury_count",
             "injury_impact",
+            "suspended_count",
+            "key_player_impact",
         ]
-        st.dataframe(league_table[standings_cols], use_container_width=True, hide_index=True)
+        _avail_standings_cols = [c for c in standings_cols if c in league_table.columns]
+        st.dataframe(league_table[_avail_standings_cols], use_container_width=True, hide_index=True)
 
         teams = sorted(current_snapshot.loc[current_snapshot["league_name"] == league, "team"].dropna().unique())
         team = st.selectbox(ui_t(lang, "check_players_team"), teams, key="page2_team")
@@ -3024,6 +3344,7 @@ def main() -> None:
             injuries_df=context["injuries_df"],
             contrib_df=context["contrib_df"],
             top_n=20,
+            player_stats_df=context.get("player_stats_df"),
         )
         injured = team_insights["injured_players"]
         if not injured.empty:
@@ -3036,7 +3357,7 @@ def main() -> None:
         st.markdown("---")
         st.markdown("#### Player Season Stats · 2025-26")
 
-        _player_stats_df = load_player_stats(str(PLAYER_STATS_FILE))
+        _player_stats_df = context.get("player_stats_df", pd.DataFrame())
 
         if _player_stats_df.empty:
             st.info(
@@ -3058,23 +3379,14 @@ def main() -> None:
                     "This team may not be in the Big 5 leagues or the name differs slightly."
                 )
             else:
+                _ps_wanted = [
+                    "player", "position", "matches", "minutes",
+                    "goals", "xg", "assists", "xa",
+                    "shots", "key_passes", "yellow_cards", "red_cards",
+                ]
+                _ps_available = [c for c in _ps_wanted if c in _ps_team.columns]
                 _ps_display = (
-                    _ps_team[
-                        [
-                            "player",
-                            "position",
-                            "matches",
-                            "minutes",
-                            "goals",
-                            "xg",
-                            "assists",
-                            "xa",
-                            "shots",
-                            "key_passes",
-                            "yellow_cards",
-                            "red_cards",
-                        ]
-                    ]
+                    _ps_team[_ps_available]
                     .rename(
                         columns={
                             "player": "Player",
@@ -3282,14 +3594,17 @@ def main() -> None:
                 ui_t(lang, "bb_to"), value=ref_date + timedelta(days=7), key="bb_end"
             )
         with bb_c3:
-            all_league_names = sorted(
+            # All ESPN-supported leagues are always available as fetch options;
+            # default to those with historical data (better model predictions).
+            _all_espn_leagues = sorted(ESPN_LEAGUE_SLUGS.keys())
+            _hist_leagues = sorted(
                 l for l in context["historical"]["league_name"].dropna().unique()
                 if l in SUPPORTED_LEAGUES
             )
             bb_leagues = st.multiselect(
                 ui_t(lang, "bb_leagues"),
-                options=all_league_names,
-                default=all_league_names,
+                options=_all_espn_leagues,
+                default=_all_espn_leagues,
                 key="bb_leagues",
                 help=ui_t(lang, "bb_leagues_help"),
             )
@@ -3317,14 +3632,42 @@ def main() -> None:
                 help=ui_t(lang, "bb_min_prob_help"),
             )
 
-        # ── Row 3: markets to consider ────────────────────────────────────────
-        bb_markets = st.multiselect(
-            ui_t(lang, "bb_markets"),
-            options=MARKET_OPTIONS,
-            default=["1X2", "Goals O/U 2.5", "Corners O/U 9.5", "Cards O/U 3.5"],
-            key="bb_markets",
-            help=ui_t(lang, "bb_markets_help"),
-        )
+        # ── Row 3: markets to consider — tile toggles ─────────────────────────
+        _MARKET_DEFAULTS = {"1X2", "Goals O/U 2.5", "Corners O/U 9.5", "Cards O/U 3.5"}
+        _MARKET_GROUPS = [
+            ("Match",      ["1X2", "BTTS", "Score First", "1st Half Result", "Win Both Halves"]),
+            ("Goals",      ["Goals O/U 1.5", "Goals O/U 2.5", "Goals O/U 3.5"]),
+            ("Corners",    ["Corners O/U 8.5", "Corners O/U 9.5", "Corners O/U 10.5"]),
+            ("Cards",      ["Cards O/U 2.5", "Cards O/U 3.5", "Cards O/U 4.5"]),
+            ("Half-time",  ["1st Half Goals O/U 0.5", "1st Half Goals O/U 1.5",
+                            "2nd Half Goals O/U 0.5", "2nd Half Goals O/U 1.5"]),
+            ("Player",     ["Player to Score"]),
+        ]
+
+        def _mkt_key(m: str) -> str:
+            return "_mkt_sel_" + m.replace(" ", "_").replace("/", "_").replace(".", "_")
+
+        # Initialise defaults on first load
+        for _mkt in MARKET_OPTIONS:
+            if _mkt_key(_mkt) not in st.session_state:
+                st.session_state[_mkt_key(_mkt)] = _mkt in _MARKET_DEFAULTS
+
+        st.markdown(f"**{ui_t(lang, 'bb_markets')}**")
+        for _grp_label, _grp_mkts in _MARKET_GROUPS:
+            _gcols = st.columns(len(_grp_mkts))
+            for _ci, _mkt in enumerate(_grp_mkts):
+                with _gcols[_ci]:
+                    _sel = bool(st.session_state.get(_mkt_key(_mkt), False))
+                    if st.button(
+                        _mkt,
+                        key=f"_mkt_btn_{_mkt_key(_mkt)}",
+                        type="primary" if _sel else "secondary",
+                        use_container_width=True,
+                    ):
+                        st.session_state[_mkt_key(_mkt)] = not _sel
+                        st.rerun()
+
+        bb_markets = [m for m in MARKET_OPTIONS if st.session_state.get(_mkt_key(m), False)]
 
         st.markdown("---")
 
@@ -3339,6 +3682,9 @@ def main() -> None:
                 st.session_state["_bb_fetch_key"] = fetch_key
                 st.session_state["_bb_fixtures"] = None
                 st.session_state["_bb_fetch_msg"] = None
+                st.session_state["_bb_all_picks"] = None
+                st.session_state["_bb_tickets"] = None
+                st.session_state["_bb_success_meta"] = None
 
             # ── Fetch button + status ─────────────────────────────────────────
             fc1, fc2 = st.columns([1, 3])
@@ -3363,14 +3709,30 @@ def main() -> None:
                     fetch_msg = ""
                     source_used = ""
 
-                    # 1️⃣  ESPN — free, no key needed, covers all 6 leagues
-                    fetched_df, fetch_msg = fetch_upcoming_fixtures_espn(
-                        bb_leagues, bb_start, bb_end
-                    )
-                    if not fetched_df.empty:
-                        source_used = "ESPN"
+                    # 1️⃣  Platform (Dremio silver_upcoming_fixtures) — no live network call
+                    try:
+                        _league_codes = [LEAGUE_NAME_TO_CODE.get(ln, ln) for ln in bb_leagues]
+                        fetched_df = dremio_data_loader.load_upcoming_fixtures(
+                            league_codes=_league_codes,
+                            start_date=bb_start,
+                            end_date=bb_end,
+                        )
+                        if not fetched_df.empty:
+                            n_pf = len(fetched_df)
+                            fetch_msg = f"✅ {n_pf} fixture(s) from platform data."
+                            source_used = "platform"
+                    except Exception:
+                        fetched_df = pd.DataFrame()
 
-                    # 2️⃣  API-Football — richer data, needs key
+                    # 2️⃣  ESPN — free, no key needed, covers all 6 leagues
+                    if fetched_df.empty:
+                        fetched_df, fetch_msg = fetch_upcoming_fixtures_espn(
+                            bb_leagues, bb_start, bb_end
+                        )
+                        if not fetched_df.empty:
+                            source_used = "ESPN"
+
+                    # 3️⃣  API-Football — richer data, needs key
                     if fetched_df.empty and api_key.strip():
                         fetched_df, fetch_msg = fetch_upcoming_fixtures_api(
                             api_key, bb_leagues, bb_start, bb_end
@@ -3378,7 +3740,7 @@ def main() -> None:
                         if not fetched_df.empty:
                             source_used = "API-Football"
 
-                    # 3️⃣  Local dataset fallback
+                    # 4️⃣  Local dataset fallback
                     if fetched_df.empty:
                         all_m = context.get("all_matches", context["historical"])
                         mask = (
@@ -3481,7 +3843,7 @@ def main() -> None:
                         else:
                             pick_records: list[dict] = []
                             margin = 0.05
-                            _pstats = load_player_stats(str(PLAYER_STATS_FILE))
+                            _pstats = context.get("player_stats_df", pd.DataFrame())
 
                             with st.spinner(ui_t(lang, "bb_compute_probs")):
                                 for _, irow in included.iterrows():
@@ -3518,7 +3880,7 @@ def main() -> None:
                                     for market in bb_markets:
 
                                         def _add_pick(label: str, prob: float, _mkt: str = market) -> None:
-                                            p = float(np.clip(prob * 0.85, 0.01, 0.99))
+                                            p = float(np.clip(prob, 0.01, 0.99))
                                             oddsv = round(max(1.01, (1 / p) * (1 - margin)), 2)
                                             try:
                                                 ctx = _pick_context(
@@ -3606,94 +3968,113 @@ def main() -> None:
 
                                 if all_picks.empty:
                                     st.warning(ui_t(lang, "bb_no_threshold", p=bb_min_prob))
+                                    st.session_state["_bb_all_picks"] = None
+                                    st.session_state["_bb_tickets"] = None
                                 else:
-                                    n_matches = all_picks["match_id"].nunique()
-                                    st.success(ui_t(
-                                        lang,
-                                        "bb_success",
-                                        picks=len(all_picks),
-                                        matches=n_matches,
-                                        prob=bb_min_prob,
-                                        n=bb_n,
-                                        legs=bb_legs,
-                                    ))
-                                    with st.expander(ui_t(lang, "bb_qualifying_picks")):
-                                        st.dataframe(
-                                            all_picks[[
-                                                "match", "market", "pick_label",
-                                                "model_prob", "odds", "expected_roi",
-                                            ]],
-                                            use_container_width=True,
-                                            hide_index=True,
-                                        )
-
                                     tickets = _build_tickets(all_picks, bb_legs, bb_n)
+                                    st.session_state["_bb_all_picks"] = all_picks
+                                    st.session_state["_bb_tickets"] = tickets
+                                    st.session_state["_bb_success_meta"] = {
+                                        "picks": len(all_picks),
+                                        "matches": all_picks["match_id"].nunique(),
+                                        "prob": bb_min_prob,
+                                        "n": bb_n,
+                                        "legs": bb_legs,
+                                    }
 
-                                    if all(df.empty for df in tickets.values()):
-                                        st.warning(ui_t(lang, "bb_no_valid_tickets"))
-                                    else:
-                                        tier_tabs = st.tabs([
-                                            ui_t(lang, "bb_tab_conservative"),
-                                            ui_t(lang, "bb_tab_moderate"),
-                                            ui_t(lang, "bb_tab_high_risk"),
-                                        ])
-                                        with tier_tabs[0]:
-                                            st.caption(ui_t(lang, "bb_cap_conservative"))
-                                            cons_table = _render_ticket_table(tickets["conservative"])
-                                            st.dataframe(
-                                                cons_table,
-                                                use_container_width=True,
-                                                hide_index=True,
-                                            )
-                                            cons_has_rows = not tickets["conservative"].empty
-                                            st.download_button(
-                                                label=ui_t(lang, "bb_download_pdf", tier=ui_t(lang, "tier_conservative")),
-                                                data=ticket_pdf_bytes(ui_t(lang, "tier_conservative"), tickets["conservative"]),
-                                                file_name=f"tickets_conservative_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
-                                                mime="application/pdf",
-                                                key=f"bb_pdf_conservative_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-                                                disabled=not cons_has_rows,
-                                                help=None if cons_has_rows else ui_t(lang, "bb_pdf_no_tickets"),
-                                                use_container_width=True,
-                                            )
-                                        with tier_tabs[1]:
-                                            st.caption(ui_t(lang, "bb_cap_moderate"))
-                                            mod_table = _render_ticket_table(tickets["moderate"])
-                                            st.dataframe(
-                                                mod_table,
-                                                use_container_width=True,
-                                                hide_index=True,
-                                            )
-                                            mod_has_rows = not tickets["moderate"].empty
-                                            st.download_button(
-                                                label=ui_t(lang, "bb_download_pdf", tier=ui_t(lang, "tier_moderate")),
-                                                data=ticket_pdf_bytes(ui_t(lang, "tier_moderate"), tickets["moderate"]),
-                                                file_name=f"tickets_moderate_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
-                                                mime="application/pdf",
-                                                key=f"bb_pdf_moderate_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-                                                disabled=not mod_has_rows,
-                                                help=None if mod_has_rows else ui_t(lang, "bb_pdf_no_tickets"),
-                                                use_container_width=True,
-                                            )
-                                        with tier_tabs[2]:
-                                            st.caption(ui_t(lang, "bb_cap_high_risk"))
-                                            risk_table = _render_ticket_table(tickets["high_risk"])
-                                            st.dataframe(
-                                                risk_table,
-                                                use_container_width=True,
-                                                hide_index=True,
-                                            )
-                                            risk_has_rows = not tickets["high_risk"].empty
-                                            st.download_button(
-                                                label=ui_t(lang, "bb_download_pdf", tier=ui_t(lang, "tier_high_risk")),
-                                                data=ticket_pdf_bytes(ui_t(lang, "tier_high_risk"), tickets["high_risk"]),
-                                                file_name=f"tickets_high_risk_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
-                                                mime="application/pdf",
-                                                key=f"bb_pdf_high_risk_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-                                                disabled=not risk_has_rows,
-                                                help=None if risk_has_rows else ui_t(lang, "bb_pdf_no_tickets"),
-                                                use_container_width=True,
-                                            )
+                    # ── Display persisted results (survives reruns) ────────────
+                    _bb_picks = st.session_state.get("_bb_all_picks")
+                    _bb_tickets = st.session_state.get("_bb_tickets")
+                    _bb_meta = st.session_state.get("_bb_success_meta")
+
+                    if _bb_picks is not None and _bb_meta is not None:
+                        st.success(ui_t(
+                            lang,
+                            "bb_success",
+                            picks=_bb_meta["picks"],
+                            matches=_bb_meta["matches"],
+                            prob=_bb_meta["prob"],
+                            n=_bb_meta["n"],
+                            legs=_bb_meta["legs"],
+                        ))
+
+                        _qp_cols = [c for c in [
+                            "match", "market", "pick_label",
+                            "model_prob", "odds", "expected_roi",
+                        ] if c in _bb_picks.columns]
+                        with st.expander(ui_t(lang, "bb_qualifying_picks"), expanded=False):
+                            st.dataframe(
+                                _bb_picks[_qp_cols],
+                                use_container_width=True,
+                                hide_index=True,
+                            )
+
+                    if _bb_tickets is not None:
+                        if all(df.empty for df in _bb_tickets.values()):
+                            st.warning(ui_t(lang, "bb_no_valid_tickets"))
+                        else:
+                            tier_tabs = st.tabs([
+                                ui_t(lang, "bb_tab_conservative"),
+                                ui_t(lang, "bb_tab_moderate"),
+                                ui_t(lang, "bb_tab_high_risk"),
+                            ])
+                            with tier_tabs[0]:
+                                st.caption(ui_t(lang, "bb_cap_conservative"))
+                                cons_table = _render_ticket_table(_bb_tickets["conservative"])
+                                st.dataframe(
+                                    cons_table,
+                                    use_container_width=True,
+                                    hide_index=True,
+                                )
+                                cons_has_rows = not _bb_tickets["conservative"].empty
+                                st.download_button(
+                                    label=ui_t(lang, "bb_download_pdf", tier=ui_t(lang, "tier_conservative")),
+                                    data=ticket_pdf_bytes(ui_t(lang, "tier_conservative"), _bb_tickets["conservative"]),
+                                    file_name=f"tickets_conservative_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                                    mime="application/pdf",
+                                    key="bb_pdf_conservative",
+                                    disabled=not cons_has_rows,
+                                    help=None if cons_has_rows else ui_t(lang, "bb_pdf_no_tickets"),
+                                    use_container_width=True,
+                                )
+                            with tier_tabs[1]:
+                                st.caption(ui_t(lang, "bb_cap_moderate"))
+                                mod_table = _render_ticket_table(_bb_tickets["moderate"])
+                                st.dataframe(
+                                    mod_table,
+                                    use_container_width=True,
+                                    hide_index=True,
+                                )
+                                mod_has_rows = not _bb_tickets["moderate"].empty
+                                st.download_button(
+                                    label=ui_t(lang, "bb_download_pdf", tier=ui_t(lang, "tier_moderate")),
+                                    data=ticket_pdf_bytes(ui_t(lang, "tier_moderate"), _bb_tickets["moderate"]),
+                                    file_name=f"tickets_moderate_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                                    mime="application/pdf",
+                                    key="bb_pdf_moderate",
+                                    disabled=not mod_has_rows,
+                                    help=None if mod_has_rows else ui_t(lang, "bb_pdf_no_tickets"),
+                                    use_container_width=True,
+                                )
+                            with tier_tabs[2]:
+                                st.caption(ui_t(lang, "bb_cap_high_risk"))
+                                risk_table = _render_ticket_table(_bb_tickets["high_risk"])
+                                st.dataframe(
+                                    risk_table,
+                                    use_container_width=True,
+                                    hide_index=True,
+                                )
+                                risk_has_rows = not _bb_tickets["high_risk"].empty
+                                st.download_button(
+                                    label=ui_t(lang, "bb_download_pdf", tier=ui_t(lang, "tier_high_risk")),
+                                    data=ticket_pdf_bytes(ui_t(lang, "tier_high_risk"), _bb_tickets["high_risk"]),
+                                    file_name=f"tickets_high_risk_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                                    mime="application/pdf",
+                                    key="bb_pdf_high_risk",
+                                    disabled=not risk_has_rows,
+                                    help=None if risk_has_rows else ui_t(lang, "bb_pdf_no_tickets"),
+                                    use_container_width=True,
+                                )
 
     st.caption(ui_t(lang, "decision_support"))
 

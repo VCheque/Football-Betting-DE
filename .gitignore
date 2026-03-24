@@ -1,5 +1,9 @@
-# Worktrees
-.claude/worktrees/
+# Claude worktrees & planning files
+.claude/
+
+# dbt generated artifacts (never commit)
+dbt/target/
+dbt/logs/
 
 # Streamlit generated
 streamlit/__pycache__/
@@ -15,3 +19,6 @@ infrastructure/.env
 __pycache__/
 *.pyc
 *.pyo
+
+# macOS
+.DS_Store

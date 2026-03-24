@@ -1,254 +1,203 @@
 # Football Betting Data Platform
 
-A data engineering platform that ingests raw football data from multiple sources, transforms it through a medallion pipeline, and serves curated analytics to a Streamlit application backed by XGBoost match prediction models.
-
-<p align="center">
-  <img alt="Python" src="https://img.shields.io/badge/Python-Ingestion_&_ML-3776AB?style=for-the-badge&logo=python&logoColor=white" />
-  <img alt="MinIO" src="https://img.shields.io/badge/MinIO-Bronze_Storage-C72E49?style=for-the-badge&logo=minio&logoColor=white" />
-  <img alt="PostgreSQL" src="https://img.shields.io/badge/PostgreSQL-Metadata_&_Dims-4169E1?style=for-the-badge&logo=postgresql&logoColor=white" />
-  <img alt="Dremio" src="https://img.shields.io/badge/Dremio-Semantic_Layer-2E77BC?style=for-the-badge&logo=dremio&logoColor=white" />
-  <img alt="dbt" src="https://img.shields.io/badge/dbt-Transformations-FF694B?style=for-the-badge&logo=dbt&logoColor=white" />
-  <img alt="XGBoost" src="https://img.shields.io/badge/XGBoost-Match_Model-21B6A8?style=for-the-badge" />
-  <img alt="Streamlit" src="https://img.shields.io/badge/Streamlit-App-FE4B4B?style=for-the-badge&logo=streamlit&logoColor=white" />
-</p>
+End-to-end data engineering platform that ingests raw football match data, transforms it through a Bronze → Silver → Gold medallion pipeline, and serves an XGBoost-powered match prediction app — fully containerised and refreshed automatically.
 
 ---
 
 ## Architecture
 
-```mermaid
-flowchart LR
-  subgraph sources["External Sources"]
-    SRC1["football-data.co.uk<br/>Match odds · 4×/day"]
-    SRC2["Understat<br/>Player stats · weekly"]
-    SRC3["Manual CSVs<br/>Injuries"]
-  end
+<div align="center">
 
-  subgraph ingestion["Python Ingestion Jobs"]
-    ING1["main.py<br/>Match & odds"]
-    ING2["run_player_stats.py<br/>Understat"]
-    ING3["upload_injuries.py<br/>Manual upload"]
-  end
+<br/>
 
-  subgraph storage["Raw Storage"]
-    MINIO["MinIO Bronze<br/>Immutable partitioned snapshots<br/>source / entity / date / run_id"]
-  end
+<table>
+  <tr>
+    <td align="center" colspan="5">
+      <b>Data Sources</b><br/>
+      <sup>football-data.co.uk &nbsp;·&nbsp; Understat &nbsp;·&nbsp; ESPN &nbsp;·&nbsp; Manual CSV</sup>
+    </td>
+  </tr>
+  <tr><td colspan="5" align="center"><br/>⬇<br/><br/></td></tr>
+  <tr>
+    <td align="center" colspan="2">
+      <img src="https://cdn.jsdelivr.net/gh/devicons/devicon@latest/icons/python/python-original.svg" width="52" alt="Python"/><br/>
+      <b>Ingestion</b><br/>
+      <sup>Python jobs · cron scheduler</sup>
+    </td>
+    <td width="40"></td>
+    <td align="center" colspan="2">
+      <img src="https://cdn.jsdelivr.net/gh/devicons/devicon@latest/icons/docker/docker-original.svg" width="52" alt="Docker"/><br/>
+      <b>Container Stack</b><br/>
+      <sup>Docker Compose</sup>
+    </td>
+  </tr>
+  <tr><td colspan="5" align="center"><br/>⬇<br/><br/></td></tr>
+  <tr>
+    <td align="center">
+      <img src="https://cdn.simpleicons.org/minio/C72E49" width="52" alt="MinIO"/><br/>
+      <b>Bronze</b><br/>
+      <sup>MinIO · raw snapshots</sup>
+    </td>
+    <td width="30" align="center">⟷</td>
+    <td align="center">
+      <img src="https://cdn.jsdelivr.net/gh/devicons/devicon@latest/icons/postgresql/postgresql-original.svg" width="52" alt="PostgreSQL"/><br/>
+      <b>Control Plane</b><br/>
+      <sup>PostgreSQL · metadata · dims</sup>
+    </td>
+    <td width="30" align="center"></td>
+    <td></td>
+  </tr>
+  <tr><td colspan="5" align="center"><br/>⬇<br/><br/></td></tr>
+  <tr>
+    <td align="center" colspan="5">
+      <img src="https://avatars.githubusercontent.com/u/12727786?v=4" width="52" alt="Dremio"/><br/>
+      <b>Semantic Layer</b><br/>
+      <sup>Dremio · federated SQL over MinIO + PostgreSQL</sup>
+    </td>
+  </tr>
+  <tr><td colspan="5" align="center"><br/>⬇<br/><br/></td></tr>
+  <tr>
+    <td align="center" colspan="5">
+      <img src="https://cdn.simpleicons.org/dbt/FF694B" width="52" alt="dbt"/><br/>
+      <b>Transformations</b><br/>
+      <sup>dbt · staging → silver → gold · seeds · tests</sup>
+    </td>
+  </tr>
+  <tr><td colspan="5" align="center"><br/>⬇<br/><br/></td></tr>
+  <tr>
+    <td align="center" colspan="2">
+      <img src="https://cdn.simpleicons.org/scikitlearn/F7931E" width="52" alt="XGBoost"/><br/>
+      <b>ML Model</b><br/>
+      <sup>XGBoost · 19 features · Platt calibration</sup>
+    </td>
+    <td width="40"></td>
+    <td align="center" colspan="2">
+      <img src="https://cdn.simpleicons.org/streamlit/FF4B4B" width="52" alt="Streamlit"/><br/>
+      <b>App</b><br/>
+      <sup>Streamlit · Dremio REST client</sup>
+    </td>
+  </tr>
+</table>
 
-  subgraph control["Control Plane"]
-    PG["PostgreSQL<br/>pipeline_run · file_manifest<br/>dim_league · dim_team<br/>dim_derby_pairs · dq_results"]
-  end
+<br/>
 
-  subgraph semantic["Semantic Layer"]
-    DREMIO["Dremio<br/>Federated SQL over MinIO + PostgreSQL<br/>semantic.raw_matches_odds<br/>semantic.raw_player_stats"]
-  end
-
-  subgraph transform["dbt Transformations"]
-    STG["Staging<br/>stg_raw_matches_odds<br/>stg_player_stats<br/>stg_injuries"]
-    SILVER["Silver<br/>silver_matches<br/>silver_matches_physical"]
-    GOLD["Gold<br/>gold_match_context<br/>gold_h2h_context<br/>gold_standings<br/>gold_rest_fatigue<br/>gold_team_season_stats<br/>gold_player_stats<br/>gold_injuries"]
-    SEEDS["Seeds<br/>derby_pairs"]
-  end
-
-  subgraph ml["ML Layer"]
-    XGB["XGBoost v2<br/>17 features · calibrated<br/>match outcome · player proba"]
-  end
-
-  subgraph app["Serving"]
-    ST["Streamlit<br/>Match Centre · Team Stats · Player Intel<br/>Dremio REST client"]
-  end
-
-  SCHED["Scheduler<br/>cron · 4×/day + weekly"]
-
-  SRC1 --> ING1
-  SRC2 --> ING2
-  SRC3 --> ING3
-  ING1 & ING2 & ING3 --> MINIO
-  ING1 & ING2 & ING3 --> PG
-  MINIO --> DREMIO
-  PG --> DREMIO
-  DREMIO --> STG
-  STG --> SILVER --> GOLD
-  SEEDS --> DREMIO
-  GOLD --> DREMIO
-  DREMIO --> XGB
-  DREMIO --> ST
-  XGB --> ST
-  SCHED --> ING1 & ING2
-
-  classDef sources fill:#E8F0FE,stroke:#4C8BF5,color:#0B1F33,stroke-width:2px;
-  classDef ingestion fill:#EAF4FF,stroke:#3776AB,color:#0B1F33,stroke-width:2px;
-  classDef minio fill:#FDECEF,stroke:#C72E49,color:#2B0D12,stroke-width:2px;
-  classDef postgres fill:#EEF4FF,stroke:#4169E1,color:#10203D,stroke-width:2px;
-  classDef dremio fill:#EEF7FF,stroke:#2E77BC,color:#0A2238,stroke-width:2px;
-  classDef dbt fill:#FFF0EB,stroke:#FF694B,color:#34150F,stroke-width:2px;
-  classDef ml fill:#F0FFF4,stroke:#21B6A8,color:#0D2B28,stroke-width:2px;
-  classDef app fill:#FFF1F1,stroke:#FE4B4B,color:#3A1010,stroke-width:2px;
-  classDef ops fill:#F5F5F5,stroke:#666666,color:#222222,stroke-width:2px;
-
-  class SRC1,SRC2,SRC3 sources;
-  class ING1,ING2,ING3 ingestion;
-  class MINIO minio;
-  class PG postgres;
-  class DREMIO dremio;
-  class STG,SILVER,GOLD,SEEDS dbt;
-  class XGB ml;
-  class ST app;
-  class SCHED ops;
-```
+</div>
 
 ---
 
-## Technology Stack
+## Stack
 
-| Layer | Tool | Role |
-|---|---|---|
-| Ingestion | Python + `aiohttp` | Async jobs for football-data.co.uk (CSV) and Understat (async HTML scraping). Assigns `run_id`, computes checksums, registers metadata before any data reaches storage. |
-| Raw storage | MinIO (S3-compatible) | Immutable Bronze snapshots partitioned by `source / entity / ingest_date / run_id`. Append-only — no file is ever overwritten or deleted. Enables full pipeline replay. |
-| Control plane | PostgreSQL | Holds dimensions (`dim_league`, `dim_team`, `dim_derby_pairs`), every ingestion run record (`pipeline_run`, `file_manifest`), source configuration, and data quality results. Structured metadata that does not belong as flat files. |
-| Semantic layer | Dremio OSS | Federates MinIO and PostgreSQL into a single SQL surface. Dremio owns the virtual view definitions (`semantic.raw_matches_odds`, `semantic.raw_player_stats`) regenerated by `sync_semantic_layer.py` after each ingestion run. The app and dbt query exclusively through Dremio, never directly against storage. |
-| Transformation | dbt | Staging → Silver → Gold model chain with `not_null`, `unique`, `accepted_values`, and relationship tests. Owns `silver_matches` as the canonical match record. Gold models are pushed back into Dremio as queryable views. Seeds manage static reference data (`derby_pairs`). |
-| ML model | XGBoost + scikit-learn | Multi-class classifier (`H/D/A`) trained in-process at app load time from Dremio Gold data. 17-feature vector with Platt sigmoid calibration (`CalibratedClassifierCV`) on a time-ordered 20% holdout. Separate Poisson models per player for goal and card probabilities. |
-| Containerisation | Docker Compose | Single `docker compose up` starts Postgres, MinIO, Dremio, and Streamlit. Ingestion and dbt runners use the `jobs` profile; the app uses the `app` profile. No Kubernetes or cloud provider required. |
-| Scheduling | cron (inside Docker) | Match/odds pipeline runs at 00:15, 06:15, 12:15, and 18:15 UTC. Understat player stats run weekly on Sundays at 02:00 UTC. Both jobs run the full ingest → sync → dbt chain. |
-| Serving | Streamlit | Reads exclusively from `semantic.gold_*` views via Dremio's REST Jobs API. Three tabs: Match Centre (predictions + EV framework), Team Stats (seasonal breakdown), Player Intel (scoring/card probabilities from Poisson). |
-
----
-
-## Technical Decisions
-
-### Medallion pipeline with Dremio as the federation point
-
-The Bronze/Silver/Gold separation exists to isolate concerns: ingestion writes raw files, transformation owns the cleaning and aggregation logic, and the app reads only curated output. Dremio is the integration point between object storage (MinIO), relational metadata (PostgreSQL), and the dbt-built Gold layer. This means the app has a single stable SQL interface regardless of where or how data is physically stored.
-
-### MinIO over a managed data warehouse
-
-MinIO keeps the stack self-contained inside Docker. It speaks S3 natively so the ingestion code uses `boto3`, Dremio connects via S3 source, and the path from local development to a cloud deployment requires only credential swaps. A managed warehouse would be faster to query but would introduce cloud costs and external dependencies that complicate reproducibility for a portfolio context.
-
-### PostgreSQL for metadata and dimensions, not for analytical queries
-
-PostgreSQL holds structured operational data: ingestion run records, checksums, row counts, data quality results, and dimension tables. It is the control plane. Analytical queries never go directly to PostgreSQL — they always go through Dremio. This separation means the metadata database can stay small and OLTP-optimised while Dremio handles columnar scan patterns over MinIO files.
-
-### dbt for all transformation logic
-
-Transformation logic lives exclusively in dbt, not in the ingestion jobs or the Streamlit app. This enforces the principle that the app is a consumer, not a transformer. Every model has tests. Lineage is documented. Gold views are regenerated deterministically from versioned SQL — no ad-hoc Python that silently changes behaviour between runs.
-
-### Derby pairs as a seeded reference table
-
-Same-city rivalry pairs (`dim_derby_pairs` in PostgreSQL, `seeds/derby_pairs.csv` materialised into Dremio via `dbt seed`) are stored as structured data rather than hardcoded constants. The Python ML layer loads them from the semantic layer at startup and falls back to a hardcoded frozenset when the database is unavailable. This pattern keeps data in the data platform and keeps the ML code stateless and testable.
-
-### XGBoost v2 with Platt calibration
-
-The match model uses XGBoost (`multi:softprob`) rather than logistic regression or a neural network because it handles the nonlinear interaction between features like `form_points_gap` and `rest_gap` without extensive feature engineering, tolerates missing values natively, and is fast enough to retrain at app load time from a few thousand rows. Probability calibration with `CalibratedClassifierCV` (sigmoid, prefit, time-ordered 20% holdout) corrects the raw XGBoost softmax outputs, which tend to be overconfident, into probabilities that are reliable enough for an expected-value betting framework.
-
-### Streamlit over a BI tool
-
-Streamlit allows the prediction logic (XGBoost inference, EV calculation, lineup adjustments) to live in the same Python process as the UI, without a separate API layer. A BI tool like Metabase or Superset would handle charts well but cannot run ML inference or call external fixture APIs inline. The app intentionally keeps no business logic in the view layer — all heavy computation happens in `sports_betting/` modules that are independently importable and testable.
-
-### No orchestration framework (no Airflow, no Prefect)
-
-A cron-based scheduler running inside Docker is sufficient for this pipeline cadence (4×/day match data, weekly player stats). Adding Airflow would be architecturally correct for a production system with dozens of pipelines and complex dependencies, but it would dominate the local resource footprint and obscure the core data engineering decisions. The scheduler is a deliberate scope choice, not an omission.
+| | Tool | Role |
+|:---:|---|---|
+| <img src="https://cdn.jsdelivr.net/gh/devicons/devicon@latest/icons/python/python-original.svg" width="24"/> | **Python** | Ingestion jobs for match data (football-data.co.uk), player stats (Understat), and upcoming fixtures (ESPN). Each job assigns a run ID, computes a SHA-256 checksum, and registers file manifests before writing to storage. |
+| <img src="https://cdn.simpleicons.org/minio/C72E49" width="24"/> | **MinIO** | S3-compatible object store for immutable Bronze snapshots. Partitioned by `source / entity / ingest_date / run_id / league / season`. Append-only — no file is ever overwritten. |
+| <img src="https://cdn.jsdelivr.net/gh/devicons/devicon@latest/icons/postgresql/postgresql-original.svg" width="24"/> | **PostgreSQL** | Control plane: ingestion run records (`pipeline_run`), file manifests, checksums, and reference dimensions (`dim_league`, `dim_team`, `dim_derby_pairs`). |
+| <img src="https://avatars.githubusercontent.com/u/12727786?v=4" width="24"/> | **Dremio** | Federates MinIO and PostgreSQL into a single SQL surface. The app and dbt always query through Dremio — never directly against storage. |
+| <img src="https://cdn.simpleicons.org/dbt/FF694B" width="24"/> | **dbt** | All transformation logic. Staging → Silver → Gold chain with `not_null`, `unique`, and `accepted_values` tests. Seeds manage static reference data. |
+| <img src="https://cdn.simpleicons.org/scikitlearn/F7931E" width="24"/> | **XGBoost** | Multi-class match outcome classifier (`H/D/A`). 19-feature vector including suspension and key-player impact gaps. Platt sigmoid calibration on a time-ordered holdout. Retrained at app load from Dremio Gold data. |
+| <img src="https://cdn.simpleicons.org/streamlit/FF4B4B" width="24"/> | **Streamlit** | Three-tab app: Match Centre (predictions + EV framework), Team Stats, League & Players. Reads exclusively from `semantic.gold_*` and `semantic.silver_*` views via Dremio's REST Jobs API. |
+| <img src="https://cdn.jsdelivr.net/gh/devicons/devicon@latest/icons/docker/docker-original.svg" width="24"/> | **Docker Compose** | Full local stack in a single `docker compose up`. Ingestion and dbt use the `jobs` profile; the app uses the `app` profile. |
 
 ---
 
-## Data Model
+## Ingestion Schedule
 
-### Bronze Layer — Raw Immutable Snapshots
+| Job | Source | Frequency | Entity |
+|---|---|---|---|
+| Match odds | football-data.co.uk | 4× daily (00:15, 06:15, 12:15, 18:15 UTC) | `matches_odds` |
+| Player stats | Understat | Weekly (Sunday 02:00 UTC) | `player_stats` |
+| Upcoming fixtures | ESPN Scoreboard API | Every 2 hours | `upcoming_fixtures` |
+| Injuries | Manual CSV upload | On demand | `injuries` |
 
-Every ingestion run writes files to MinIO under a partition scheme that prevents collisions and enables replay:
+---
 
-```
-s3://football/bronze/
-  source=football-data/entity=matches_odds/ingest_date=2025-01-15/run_id=<uuid>/E0.csv
-  source=understat/entity=player_stats/ingest_date=2025-01-15/run_id=<uuid>/league=EPL/season=2024/EPL_2024_players.csv
-  source=manual/entity=injuries/ingest_date=2025-01-15/run_id=<uuid>/injuries.csv
-```
+## dbt Models
 
-Files are never modified after writing. Reprocessing always reads from Bronze.
+### Silver Layer
 
-### Silver Layer — Canonical Match Record
-
-`silver_matches` is the single source of truth for match results. It cleans column types, standardises date formats, maps league codes, and deduplicates. All Gold models and the ML feature vector derive from this table. It is materialised as a Dremio-managed physical table (`silver_matches_physical`) and exposed as `semantic.silver_matches`.
-
-### Gold Layer — Analytical Marts
-
-| Model | What it computes |
+| Model | What it produces |
 |---|---|
-| `gold_match_context` | Rolling 5-game windows per team: points/game, goals for/against, corners, yellow cards, shots, shots-on-target differential, momentum slope |
-| `gold_h2h_context` | Exponentially decayed head-to-head win rates, goal differential, and recency gap between the two teams in a fixture |
-| `gold_standings` | Cumulative season standings: position, PPG, W-D-L, GF, GA, GD — computed from `silver_matches` home/away union |
-| `gold_rest_fatigue` | Days since last match and matches played in the previous 21 days, per team per fixture |
-| `gold_team_season_stats` | Team statistics split by scope: all / home / away / vs top-half / vs bottom-half opponents |
-| `gold_player_stats` | Per-player rates per 90 minutes: xG, xA, goals, assists, shots, cards — plus Poisson lambda derivations |
-| `gold_injuries` | Active injury records loaded from manually uploaded CSVs in MinIO |
+| `silver_matches` | Cleaned and standardised match records with full-time results, goals, shots, cards, corners, and odds |
+| `silver_upcoming_fixtures` | Deduplicated fixture schedule from ESPN — upcoming and recently completed matches for all 6 leagues |
 
-### ML Feature Vector (17 features)
+### Gold Layer
 
-| Feature | Source |
+| Model | What it produces |
 |---|---|
-| `form_points_gap` | `gold_match_context` — home minus away rolling PPG |
-| `forward_goals_gap` | `gold_match_context` — goals scored differential |
-| `defense_gap` | `gold_match_context` — goals conceded differential |
-| `corners_gap` | `gold_match_context` — corners per game differential |
-| `cards_gap` | `gold_match_context` — yellow cards per game differential |
-| `season_points_gap` | `gold_standings` — cumulative PPG differential |
-| `rest_gap` | `gold_rest_fatigue` — days rest differential |
-| `fatigue_gap` | `gold_rest_fatigue` — matches-last-21d differential |
-| `h2h_gap` | `gold_h2h_context` — decayed H2H win rate differential |
-| `h2h_goal_diff` | `gold_h2h_context` — decayed H2H goal differential |
-| `injury_gap` | `gold_injuries` — squad availability differential |
-| `lineup_strength_gap` | `gold_player_stats` + `gold_injuries` — weighted lineup quality |
-| `league_idx` | `dim_league` — encoded league identifier |
-| `home_role_gap` | home team's home-only PPG minus away team's away-only PPG |
-| `momentum_gap` | OLS slope of last-5 points / 3 — trend differential |
-| `derby_flag` | Binary flag from `dim_derby_pairs` — same-city rivalry indicator |
-| `sot_gap` | Shots-on-target differential per game — xG proxy |
+| `gold_match_context` | Rolling 5-game form per team: points/game, goals, corners, cards, shots-on-target diff, momentum slope |
+| `gold_h2h_context` | Exponentially decayed head-to-head win rates and goal differential per matchup |
+| `gold_standings` | Live season table: position, PPG, W-D-L, GF, GA, GD |
+| `gold_rest_fatigue` | Days since last match + matches played in the previous 21 days per team |
+| `gold_team_season_stats` | Stats split by scope: all / home / away / vs top-half / vs bottom-half |
+| `gold_player_stats` | Per-player rates per 90 min: xG, xA, goals, assists, key passes, cards |
+| `gold_injuries` | Active injury records from manually uploaded CSVs |
 
 ---
 
-## Repository Structure
+## App Features
 
-```
-Football-Betting-DE/
-├── ingestion/                  # Python ingestion jobs
-│   └── src/
-│       ├── main.py             # Match & odds entry point
-│       ├── run_player_stats.py # Understat player stats entry point
-│       ├── upload_injuries.py  # Manual injuries CSV uploader
-│       ├── understat_player_stats.py
-│       ├── storage.py          # MinIO S3 client
-│       └── postgres.py         # Metadata DB operations
-├── dbt/                        # dbt project
-│   ├── models/
-│   │   ├── staging/            # Raw → typed staging views
-│   │   ├── silver/             # silver_matches canonical record
-│   │   └── marts/              # Gold analytical models
-│   └── seeds/
-│       └── derby_pairs.csv     # Same-city rivalry reference table
-├── sql/
-│   └── postgres/               # Migration scripts (001_, 002_, 003_…)
-├── infrastructure/
-│   ├── docker-compose.yml      # Full local stack
-│   ├── scripts/
-│   │   └── sync_semantic_layer.py  # Regenerates Dremio views post-ingest
-│   └── scheduler/              # Cron-based scheduler container
-└── streamlit/                  # Serving layer
-    ├── app.py                  # Streamlit application
-    ├── dremio_client.py        # Dremio REST Jobs API client
-    ├── dremio_data_loader.py   # Drop-in data access functions
-    └── sports_betting/         # ML package
-        ├── xgboost_models.py   # XGBoost + calibration training & inference
-        ├── generate_bet_combinations.py  # Feature vector construction
-        └── generate_model_doc.py # PDF documentation generator
-```
+### Match Centre
+- League and team selectors across all 6 leagues (Premier League, La Liga, Serie A, Bundesliga, Ligue 1, Primeira Liga)
+- XGBoost outcome probabilities (`H / D / A`) with EV-based pick recommendations at three risk tiers (Conservative, Moderate, High Risk)
+- Auto-suggested odds from the model (5% margin)
+- Suspension alerts: yellow-card accumulation tracking + red-card bans flagged per team before prediction
+- Key player impact score per team derived from season per-90 xG/goals/assists
+- Player intel panel: active injuries, likely scorers, likely card candidates — sourced from `gold_player_stats` when per-match contrib data is unavailable
+
+### Team Stats
+- Head-to-head analytics with configurable year window and home/away/all scope
+- Rolling form charts and season aggregate comparisons
+
+### League & Players
+- Full standings table: position, points, GD, form, home/away PPG, injury count, suspension count, key player impact
+- Per-player XGBoost scoring/carding probabilities
+- Team injury and player performance summary
+
+### Bet Builder
+- Multi-league fixture selector with configurable date range
+- Fixture source priority: Platform DB (Dremio `silver_upcoming_fixtures`) → ESPN live → API-Football → local dataset
+- Accumulator ticket builder with EV filter and multi-market support
+
+### Sidebar
+- Pipeline freshness panel: last successful run timestamp per entity, row count, and staleness indicator (green < 6h / yellow < 24h / red ≥ 24h)
+- Production mode warnings when Dremio is unreachable or silver tables are empty
 
 ---
 
-## Data Sources
+## Clone & Run
 
-**football-data.co.uk** provides historical and current-season match results with Bet365, Betfair, and Betway odds for six leagues: Premier League (E0), La Liga (SP1), Serie A (I1), Bundesliga (D1), Ligue 1 (F1), and Primeira Liga (P1). The ingestion job runs four times daily and handles incremental season detection automatically.
+```bash
+git clone https://github.com/VCheque/Football-Betting-DE.git
+cd Football-Betting-DE
+cp infrastructure/.env.example infrastructure/.env
+```
 
-**Understat** provides per-player xG, xA, goals, assists, shots, key passes, and card counts by season for five leagues (Primeira Liga excluded — not available on Understat). The scraper uses the `understat` Python library with `aiohttp` and runs weekly.
+Edit `infrastructure/.env` with your credentials, then start the core services:
 
-**Manual CSV upload** handles injury data — no free API provides reliable injury records across all six leagues. The `upload_injuries.py` script pushes CSVs to MinIO Bronze under the `source=manual` partition, where dbt reads them through `gold_injuries`.
+```bash
+cd infrastructure
+docker compose up -d postgres minio dremio
+```
 
-**ESPN API (free)** and **API-Football (paid)** provide upcoming fixture schedules and starting XI lineups respectively. These are called at app runtime, not ingested into the pipeline, because they are inherently real-time and stateless.
+Seed the database and build the Gold models:
+
+```bash
+docker compose --profile jobs up -d dbt-runner
+docker exec football-dbt dbt seed
+docker exec football-dbt dbt run
+```
+
+Trigger the first ingestion run to populate Bronze and Silver:
+
+```bash
+docker compose --profile jobs run --rm ingestion-runner python -m src.main
+docker compose --profile jobs run --rm ingestion-runner python -m src.run_player_stats
+docker compose --profile jobs run --rm ingestion-runner python -m src.run_upcoming_fixtures
+```
+
+Start the app:
+
+```bash
+docker compose --profile app up -d streamlit
+# → http://localhost:8501
+```

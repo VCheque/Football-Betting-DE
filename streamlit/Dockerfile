@@ -15,6 +15,7 @@ COPY dremio_data_loader.py .
 # ML models and bet-combination logic work without a separate install step.
 COPY app.py .
 COPY sports_betting/ ./sports_betting/
+COPY .streamlit/ ./.streamlit/
 
 EXPOSE 8501
 

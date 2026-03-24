@@ -470,57 +470,49 @@ def train_match_model(
         return None
 
     from xgboost import XGBClassifier
-    from sklearn.calibration import CalibratedClassifierCV
     from sklearn.metrics import brier_score_loss, log_loss
 
-    # ── Time-ordered 80/20 split (no data leakage) ────────────────────────
-    # Training set: first 80% of chronologically sorted matches
-    # Calibration set: last 20% → used to fit Platt sigmoid without leakage
+    # ── Time-ordered 80/20 split for holdout validation ───────────────────
     split = max(int(len(X) * 0.80), 200)
     if split >= len(X) - 20:
         split = max(len(X) - 50, 200)
 
-    X_tr, X_cal = X.iloc[:split], X.iloc[split:]
-    y_tr, y_cal = y.iloc[:split], y.iloc[split:]
-    sw_tr, sw_cal = sample_w.iloc[:split], sample_w.iloc[split:]
+    X_tr, X_val = X.iloc[:split], X.iloc[split:]
+    y_tr, y_val = y.iloc[:split], y.iloc[split:]
+    sw_tr = sample_w.iloc[:split]
 
     base_model = XGBClassifier(
         objective="multi:softprob",
         num_class=3,
-        n_estimators=100,       # v2: increased from 60 for 17 features
-        max_depth=4,            # v2: increased from 3 for additional depth
-        learning_rate=0.08,     # v2: slightly lower to compensate for more trees
+        n_estimators=100,
+        max_depth=4,
+        learning_rate=0.08,
         subsample=0.85,
         colsample_bytree=0.85,
-        reg_lambda=1.2,         # slightly stronger L2 regularisation
-        min_child_weight=3,     # prevents overfitting on sparse features
+        reg_lambda=1.2,
+        min_child_weight=3,
         eval_metric="mlogloss",
         tree_method="hist",
-        n_jobs=1,               # single thread avoids overhead on shared cloud CPU
+        n_jobs=1,
         random_state=42,
     )
     base_model.fit(X_tr[MATCH_FEATURE_COLS], y_tr, sample_weight=sw_tr)
 
-    # ── Platt sigmoid calibration (per-class OvR isotonic) ────────────────
-    # cv="prefit" means the base_model is already trained; calibration is
-    # fitted on the held-out 20% to prevent data leakage.
-    cal_model = CalibratedClassifierCV(base_model, method="sigmoid", cv="prefit")
-    cal_model.fit(X_cal[MATCH_FEATURE_COLS], y_cal, sample_weight=sw_cal)
-
-    # ── Compute validation metrics on the calibration holdout ─────────────
-    cal_proba = cal_model.predict_proba(X_cal[MATCH_FEATURE_COLS])
+    # ── Compute validation metrics on the holdout set ─────────────────────
+    # XGBoost multi:softprob outputs direct class probabilities.
+    cal_proba = base_model.predict_proba(X_val[MATCH_FEATURE_COLS])
     try:
         brier = float(np.mean([
-            brier_score_loss((y_cal == cls).astype(int), cal_proba[:, cls])
+            brier_score_loss((y_val == cls).astype(int), cal_proba[:, cls])
             for cls in range(3)
         ]))
-        ll = float(log_loss(y_cal, cal_proba))
+        ll = float(log_loss(y_val, cal_proba))
     except Exception:   # noqa: BLE001
         brier = 0.0
         ll = 0.0
 
     return MatchModelBundle(
-        model=cal_model,
+        model=base_model,
         feature_cols=MATCH_FEATURE_COLS,
         brier_score=brier,
         log_loss_val=ll,

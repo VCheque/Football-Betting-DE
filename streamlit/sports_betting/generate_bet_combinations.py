@@ -682,6 +682,7 @@ def player_match_insights(
     injuries_df: pd.DataFrame,
     contrib_df: pd.DataFrame,
     top_n: int = 5,
+    player_stats_df: pd.DataFrame | None = None,
 ) -> dict[str, pd.DataFrame]:
     target_teams = {home_team, away_team}
 
@@ -702,9 +703,37 @@ def player_match_insights(
         ).dt.date
 
     if contrib_df.empty:
+        # Fallback: derive likely scorers from season player stats when per-match
+        # contrib data is unavailable.
+        scorers_fallback = pd.DataFrame(columns=["team", "player", "score_likelihood"])
+        if player_stats_df is not None and not player_stats_df.empty:
+            _ps = player_stats_df.copy()
+            _tc = "team" if "team" in _ps.columns else None
+            _pc = "player" if "player" in _ps.columns else "player_name" if "player_name" in _ps.columns else None
+            if _tc and _pc:
+                _ps = _ps.loc[_ps[_tc].isin({home_team, away_team})].copy()
+                for c in ("goals", "assists", "xg", "xa", "key_passes", "minutes"):
+                    if c not in _ps.columns:
+                        _ps[c] = 0.0
+                    _ps[c] = pd.to_numeric(_ps[c], errors="coerce").fillna(0.0)
+                _min90 = (_ps["minutes"] / 90.0).clip(lower=0.5)
+                _ps["score_likelihood"] = (
+                    1.5 * _ps["goals"]
+                    + 0.8 * _ps["xg"]
+                    + 0.5 * _ps["assists"]
+                    + 0.3 * _ps.get("key_passes", 0.0)
+                ) / _min90
+                _injured_names = set(injured_out["player"].astype(str)) if not injured_out.empty else set()
+                _ps = _ps.loc[~_ps[_pc].astype(str).isin(_injured_names)]
+                scorers_fallback = (
+                    _ps.sort_values("score_likelihood", ascending=False)
+                    .head(max(top_n, 1))
+                    .rename(columns={_tc: "team", _pc: "player"})[["team", "player", "score_likelihood"]]
+                    .reset_index(drop=True)
+                )
         return {
             "injured_players": injured_out,
-            "likely_scorers": pd.DataFrame(columns=["team", "player", "score_likelihood"]),
+            "likely_scorers": scorers_fallback,
             "likely_cards": pd.DataFrame(columns=["team", "player", "card_likelihood"]),
         }
 
@@ -777,6 +806,203 @@ def player_match_insights(
     }
 
 
+# Yellow-card suspension thresholds per league (accumulated yellows in a season
+# before a one-match ban is imposed). Most domestic leagues use 5 or 10.
+# Values: (first_threshold, second_threshold) — after first_threshold the counter
+# resets; we only care about the current count relative to the nearest threshold.
+_YELLOW_THRESHOLDS: dict[str, int] = {
+    "E0":  5,   # Premier League: 5Y → 1-match ban
+    "SP1": 5,   # La Liga
+    "I1":  5,   # Serie A
+    "D1":  5,   # Bundesliga
+    "F1":  5,   # Ligue 1
+    "P1":  5,   # Primeira Liga
+}
+_DEFAULT_YELLOW_THRESHOLD = 5
+
+# Importance weight assigned to a suspended player when their season impact is unknown
+_UNKNOWN_SUSPENSION_WEIGHT = 1.0
+
+
+def build_suspension_snapshot(
+    team_rows: pd.DataFrame,
+    as_of_date: pd.Timestamp,
+    player_stats_df: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Estimate the number of players per team who are suspended for the next match.
+
+    Two suspension types are detected:
+    1. **Yellow-card accumulation**: a player (team-level aggregated, since we have
+       team card totals not per-player cards) whose team is at or beyond the league
+       suspension threshold in the current season.  We use team-level yellows as a
+       proxy for how close the squad is to producing a suspension.
+    2. **Red-card ban**: any match where the team received ≥1 red card implies at
+       least one player misses the immediately following match.
+
+    Returns columns: team, suspended_count, suspended_impact.
+    ``suspended_impact`` is the sum of player importance scores (from player_stats_df
+    if available, otherwise _UNKNOWN_SUSPENSION_WEIGHT per suspended count).
+    """
+    _empty = pd.DataFrame(columns=["team", "suspended_count", "suspended_impact"])
+    if team_rows.empty:
+        return _empty
+
+    required = {"league_code", "team", "match_date", "yellow", "red"}
+    if not required.issubset(team_rows.columns):
+        return _empty
+
+    rows = team_rows.copy()
+    rows["match_date"] = pd.to_datetime(rows["match_date"], errors="coerce")
+    rows = rows.loc[rows["match_date"].notna() & (rows["match_date"] <= as_of_date)].copy()
+    if rows.empty:
+        return _empty
+
+    # ── Season boundary: use August cutoff matching the app convention ──────
+    yr = as_of_date.year
+    season_start = pd.Timestamp(yr if as_of_date.month >= 8 else yr - 1, 8, 1)
+    season_rows = rows.loc[rows["match_date"] >= season_start].copy()
+
+    records: list[dict] = []
+    for (league_code, team), g in season_rows.groupby(["league_code", "team"], dropna=False):
+        threshold = _YELLOW_THRESHOLDS.get(str(league_code), _DEFAULT_YELLOW_THRESHOLD)
+        g_sorted = g.sort_values("match_date")
+
+        # ── Accumulated yellow cards this season with suspension resets ──────
+        running_yellows = 0
+        yellow_suspensions = 0
+        for _, row in g_sorted.iterrows():
+            running_yellows += int(row.get("yellow", 0))
+            if running_yellows >= threshold:
+                yellow_suspensions += 1
+                running_yellows = 0  # reset after suspension served
+
+        # ── Red cards in the last match → player misses next match ──────────
+        # Use the most recent match only (red cards from older matches are
+        # assumed already served)
+        last_match = g_sorted.iloc[-1] if not g_sorted.empty else None
+        red_suspensions = max(0, int(last_match["red"])) if last_match is not None else 0
+
+        # ── Total suspended players (estimated) ─────────────────────────────
+        # yellow_suspensions counts how many "suspension events" the team has
+        # experienced. We check whether the most recent suspension is still pending:
+        # if the team played their last match after their last accumulated-yellow
+        # suspension they still need to serve it for the *next* game.
+        # Simplified heuristic: if team is currently AT the threshold (running_yellows
+        # == threshold - 1) we flag as "at risk" (0.5 weight) rather than suspended.
+        at_risk = 1 if running_yellows >= threshold - 1 else 0
+
+        total_suspended = red_suspensions  # confirmed
+        at_risk_weight = at_risk * 0.5    # probabilistic (not confirmed ban)
+
+        records.append(
+            {
+                "league_code": league_code,
+                "team": team,
+                "suspended_count": total_suspended + at_risk_weight,
+                "_reds": red_suspensions,
+                "_at_risk": at_risk,
+            }
+        )
+
+    if not records:
+        return _empty
+
+    df = pd.DataFrame(records)
+
+    # ── Compute suspended_impact using player stats if available ─────────────
+    # If player_stats_df has per-player stats (xg, goals, assists per 90) we can
+    # estimate how impactful the suspended/at-risk players might be for each team.
+    # We approximate: one suspended player costs the team their #11 player's impact.
+    if player_stats_df is not None and not player_stats_df.empty:
+        _ps = player_stats_df.copy()
+        team_col = "team" if "team" in _ps.columns else None
+        if team_col:
+            for c in ("xg", "goals", "assists", "xa", "key_passes", "minutes"):
+                if c not in _ps.columns:
+                    _ps[c] = 0.0
+                _ps[c] = pd.to_numeric(_ps[c], errors="coerce").fillna(0.0)
+            _ps["_impact_p90"] = (
+                1.5 * _ps["goals"]
+                + 1.1 * _ps["assists"]
+                + 0.8 * _ps["xg"]
+                + 0.6 * _ps.get("xa", 0.0)
+                + 0.10 * _ps.get("key_passes", 0.0)
+            ) / (_ps["minutes"].replace(0, np.nan) / 90.0).fillna(1.0)
+
+            # Median impact for the 11th-best player per team (proxy cost of losing one player)
+            team_median_impact = (
+                _ps.groupby(team_col)["_impact_p90"]
+                .apply(lambda s: s.nlargest(15).iloc[-1] if len(s) >= 11 else s.median())
+                .rename("_median_impact")
+                .reset_index()
+                .rename(columns={team_col: "team"})
+            )
+            df = df.merge(team_median_impact, on="team", how="left")
+            df["_median_impact"] = df["_median_impact"].fillna(_UNKNOWN_SUSPENSION_WEIGHT)
+            df["suspended_impact"] = df["suspended_count"] * df["_median_impact"]
+        else:
+            df["suspended_impact"] = df["suspended_count"] * _UNKNOWN_SUSPENSION_WEIGHT
+    else:
+        df["suspended_impact"] = df["suspended_count"] * _UNKNOWN_SUSPENSION_WEIGHT
+
+    return df[["team", "suspended_count", "suspended_impact"]].copy()
+
+
+def build_key_player_snapshot(player_stats_df: pd.DataFrame) -> pd.DataFrame:
+    """Compute per-team squad quality score from season player stats.
+
+    Uses gold_player_stats (xg, goals, assists, key_passes per 90) to rank
+    the top 11 players per team and produce a ``key_player_impact`` score.
+    This feeds the lineup_strength_gap feature even when no explicit lineup
+    is entered.
+
+    Returns columns: team, key_player_impact, top_player_name, top_player_impact.
+    """
+    _empty = pd.DataFrame(columns=["team", "key_player_impact", "top_player_name", "top_player_impact"])
+    if player_stats_df is None or player_stats_df.empty:
+        return _empty
+
+    ps = player_stats_df.copy()
+    team_col = "team" if "team" in ps.columns else None
+    player_col = "player" if "player" in ps.columns else "player_name" if "player_name" in ps.columns else None
+    if team_col is None or player_col is None:
+        return _empty
+
+    for c in ("xg", "goals", "assists", "xa", "key_passes", "minutes"):
+        if c not in ps.columns:
+            ps[c] = 0.0
+        ps[c] = pd.to_numeric(ps[c], errors="coerce").fillna(0.0)
+
+    # Per-90 weighted impact score
+    ps["_min90"] = (ps["minutes"] / 90.0).clip(lower=0.5)  # at least 0.5 game equivalent
+    ps["impact_p90"] = (
+        1.5 * ps["goals"]
+        + 1.1 * ps["assists"]
+        + 0.8 * ps["xg"]
+        + 0.6 * ps.get("xa", 0.0)
+        + 0.10 * ps.get("key_passes", 0.0)
+    ) / ps["_min90"]
+
+    records: list[dict] = []
+    for team, g in ps.groupby(team_col, dropna=False):
+        top11 = g.nlargest(11, "impact_p90")
+        if top11.empty:
+            continue
+        top1 = top11.iloc[0]
+        records.append(
+            {
+                "team": team,
+                "key_player_impact": float(top11["impact_p90"].mean()),
+                "top_player_name": str(top1[player_col]),
+                "top_player_impact": float(top1["impact_p90"]),
+            }
+        )
+
+    if not records:
+        return _empty
+    return pd.DataFrame(records)
+
+
 def build_team_snapshot(
     historical: pd.DataFrame,
     as_of_date: pd.Timestamp,
@@ -784,6 +1010,7 @@ def build_team_snapshot(
     injuries_df: pd.DataFrame,
     player_contrib_df: pd.DataFrame,
     other_comp_df: pd.DataFrame,
+    player_stats_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     team_rows = _prepare_team_match_rows(historical)
     aggregate = _team_aggregates(team_rows, as_of_date)
@@ -793,10 +1020,14 @@ def build_team_snapshot(
     injury_snapshot = build_injury_snapshot(injuries_df, as_of_date)
     contrib_snapshot = build_player_contrib_snapshot(player_contrib_df, as_of_date)
     other_snapshot = build_other_comp_snapshot(other_comp_df, as_of_date)
+    suspension_snapshot = build_suspension_snapshot(team_rows, as_of_date, player_stats_df)
+    key_player_snapshot = build_key_player_snapshot(player_stats_df if player_stats_df is not None else pd.DataFrame())
 
     snapshot = snapshot.merge(injury_snapshot, on="team", how="left")
     snapshot = snapshot.merge(contrib_snapshot, on="team", how="left")
     snapshot = snapshot.merge(other_snapshot, on="team", how="left")
+    snapshot = snapshot.merge(suspension_snapshot, on="team", how="left")
+    snapshot = snapshot.merge(key_player_snapshot, on="team", how="left")
 
     fill_zero = [
         "last_points_pg",
@@ -806,16 +1037,24 @@ def build_team_snapshot(
         "last_corners_diff_pg",
         "last_cards_pg",
         "last_draw_rate",
-        "last_sot_diff_pg",       # NEW v2
-        "last_momentum_slope",    # NEW v2
+        "last_sot_diff_pg",
+        "last_momentum_slope",
         "injury_count",
         "injury_impact",
         "player_form",
         "last_game_key_players",
         "other_matches_last7",
+        "suspended_count",
+        "suspended_impact",
+        "key_player_impact",
+        "top_player_impact",
     ]
     for col in fill_zero:
         snapshot[col] = pd.to_numeric(snapshot[col], errors="coerce").fillna(0.0)
+
+    if "top_player_name" not in snapshot.columns:
+        snapshot["top_player_name"] = ""
+    snapshot["top_player_name"] = snapshot["top_player_name"].fillna("")
 
     if "other_days_rest" not in snapshot.columns:
         snapshot["other_days_rest"] = 14.0
