@@ -26,8 +26,12 @@ RUN pip install --no-cache-dir -r /tmp/dbt-requirements.txt
 
 COPY infrastructure/scheduler/cron/ingestion-crontab /etc/cron.d/ingestion-crontab
 COPY infrastructure/scheduler/scripts/run_scheduled_ingestion.sh /usr/local/bin/run-scheduled-ingestion.sh
+COPY infrastructure/scheduler/scripts/run_scheduled_player_stats.sh /usr/local/bin/run-scheduled-player-stats.sh
+COPY infrastructure/scheduler/scripts/run_scheduled_upcoming_fixtures.sh /usr/local/bin/run-scheduled-upcoming-fixtures.sh
 
 RUN chmod 0644 /etc/cron.d/ingestion-crontab \
-    && chmod +x /usr/local/bin/run-scheduled-ingestion.sh
+    && chmod +x /usr/local/bin/run-scheduled-ingestion.sh \
+    && chmod +x /usr/local/bin/run-scheduled-player-stats.sh \
+    && chmod +x /usr/local/bin/run-scheduled-upcoming-fixtures.sh
 
 ENTRYPOINT ["/usr/local/bin/supercronic", "/etc/cron.d/ingestion-crontab"]

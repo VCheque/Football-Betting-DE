@@ -7,3 +7,6 @@ PATH=/usr/local/bin:/usr/bin:/bin
 # Run the Understat player-stats ingestion once per week (Sunday 02:00 UTC).
 # Player stats update at most daily; a weekly refresh is sufficient.
 0 2 * * 0 /usr/local/bin/run-scheduled-player-stats.sh
+
+# Run the ESPN upcoming-fixtures ingestion every 2 hours to keep fixtures fresh.
+0 */2 * * * /usr/local/bin/run-scheduled-upcoming-fixtures.sh

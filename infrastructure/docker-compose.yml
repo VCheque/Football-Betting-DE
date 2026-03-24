@@ -154,6 +154,7 @@ services:
       DREMIO_USER: ${DREMIO_USER}
       DREMIO_PASSWORD: ${DREMIO_PASSWORD}
       DREMIO_TIMEOUT: 60
+      APP_ENV: production
     networks:
       - platform
     profiles:

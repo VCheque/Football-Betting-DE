@@ -67,10 +67,21 @@ RAW_PLAYER_COLUMNS = (
     "league_code",
 )
 
+# Columns written by ingestion/src/run_upcoming_fixtures.py
+RAW_UPCOMING_FIXTURES_COLUMNS = (
+    "match_date",
+    "league_code",
+    "home_team",
+    "away_team",
+    "result_ft",
+    "espn_status",
+)
+
 # Maps entity_name → CSV column tuple for render_select()
 ENTITY_COLUMNS: dict[str, tuple[str, ...]] = {
     "matches_odds": RAW_MATCH_COLUMNS,
     "player_stats": RAW_PLAYER_COLUMNS,
+    "upcoming_fixtures": RAW_UPCOMING_FIXTURES_COLUMNS,
 }
 
 OBJECT_KEY_PATTERN = re.compile(
